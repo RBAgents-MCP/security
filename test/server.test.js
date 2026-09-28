@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { afterEach, test } from "node:test";
+import { test } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { SERVER_ID, createServer, listTools } from "../src/server.js";
@@ -26,12 +26,18 @@ async function withClient(run) {
   }
 }
 
-const ORIGINAL_API_KEY = process.env.API_KEY;
+/** The text of a single-content tool result. */
+function textOf(result) {
+  assert.notEqual(result.isError, true, "expected a successful result");
+  assert.equal(result.content.length, 1, "expected exactly one content block");
+  return result.content[0].text;
+}
 
-afterEach(() => {
-  if (ORIGINAL_API_KEY === undefined) delete process.env.API_KEY;
-  else process.env.API_KEY = ORIGINAL_API_KEY;
-});
+/** The two Roblox security conventions, in the shape the index routes them by. */
+const CONVENTIONS = [
+  "roblox/security/zero-trust-networking.md",
+  "roblox/security/trust-boundaries.md",
+];
 
 test("the CLI list and the MCP tool list agree", async () => {
   await withClient(async ({ client }) => {
@@ -52,130 +58,158 @@ test("the CLI list and the MCP tool list agree", async () => {
   });
 });
 
-test("the four sample tools are registered", async () => {
+test("roblox_security_instruction is the only tool", async () => {
   await withClient(async ({ client }) => {
     const { tools } = await client.listTools();
 
-    assert.deepEqual(tools.map((tool) => tool.name).sort(), [
-      "calculate_sum",
-      "get_secure_summary",
-      "get_server_time",
-      "search_secure_data",
-    ]);
+    assert.deepEqual(tools.map((tool) => tool.name), ["roblox_security_instruction"]);
   });
 });
 
-test("tools with a zod schema advertise their parameters", async () => {
+test("roblox_security_instruction advertises the path it takes", async () => {
   await withClient(async ({ client }) => {
     const { tools } = await client.listTools();
-    const byName = new Map(tools.map((tool) => [tool.name, tool]));
+    const tool = tools[0];
 
-    const sum = byName.get("calculate_sum").inputSchema;
-    assert.deepEqual(Object.keys(sum.properties).sort(), ["a", "b"]);
-    assert.equal(sum.properties.a.type, "number");
-    assert.deepEqual(sum.required.sort(), ["a", "b"]);
-
-    const search = byName.get("search_secure_data").inputSchema;
-    assert.deepEqual(Object.keys(search.properties), ["query"]);
-    assert.equal(search.properties.query.type, "string");
+    assert.deepEqual(Object.keys(tool.inputSchema.properties), ["path"]);
+    assert.equal(tool.inputSchema.properties.path.type, "string");
+    assert.deepEqual(tool.inputSchema.required, ["path"]);
   });
 });
 
-test("tools without a schema advertise no parameters", async () => {
+test("roblox_security_instruction returns a convention from the set", async () => {
   await withClient(async ({ client }) => {
-    const { tools } = await client.listTools();
-    const byName = new Map(tools.map((tool) => [tool.name, tool]));
-
-    for (const name of ["get_server_time", "get_secure_summary"]) {
-      const properties = byName.get(name).inputSchema.properties ?? {};
-      assert.deepEqual(Object.keys(properties), [], `${name} takes no arguments`);
-    }
-  });
-});
-
-test("get_server_time returns a timestamp without an API key", async () => {
-  delete process.env.API_KEY;
-
-  await withClient(async ({ client }) => {
-    const result = await client.callTool({ name: "get_server_time", arguments: {} });
-
-    assert.notEqual(result.isError, true);
-    assert.match(
-      result.content[0].text,
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+    const text = textOf(
+      await client.callTool({
+        name: "roblox_security_instruction",
+        arguments: { path: "roblox/security/zero-trust-networking.md" },
+      })
     );
+
+    // \r? because a checkout on Windows serves CRLF, and the bytes are served as
+    // they are on disk.
+    assert.match(text, /^---\r?\n/, "frontmatter is part of the served text");
+    assert.ok(text.includes("name:"), "frontmatter is not stripped");
   });
 });
 
-test("calculate_sum adds its arguments without an API key", async () => {
-  delete process.env.API_KEY;
-
+test("the index is reachable and routes the two files", async () => {
   await withClient(async ({ client }) => {
-    const result = await client.callTool({
-      name: "calculate_sum",
-      arguments: { a: 2, b: 40 },
-    });
+    const text = textOf(
+      await client.callTool({
+        name: "roblox_security_instruction",
+        arguments: { path: "index/roblox-security-index.md" },
+      })
+    );
 
-    assert.notEqual(result.isError, true);
-    assert.equal(result.content[0].text, "42");
-  });
-});
-
-test("calculate_sum rejects arguments of the wrong type", async () => {
-  await withClient(async ({ client }) => {
-    const result = await client.callTool({
-      name: "calculate_sum",
-      arguments: { a: "two", b: 40 },
-    });
-
-    assert.equal(result.isError, true);
-  });
-});
-
-test("the authenticated tools fail descriptively with no API key", async () => {
-  delete process.env.API_KEY;
-
-  await withClient(async ({ client }) => {
-    for (const [name, args] of [
-      ["get_secure_summary", {}],
-      ["search_secure_data", { query: "anything" }],
-    ]) {
-      const result = await client.callTool({ name, arguments: args });
-
-      assert.equal(result.isError, true, `${name} must fail without a key`);
-      assert.match(result.content[0].text, new RegExp(name));
-      assert.match(result.content[0].text, /API_KEY/);
+    for (const path of CONVENTIONS) {
+      assert.ok(text.includes(path), `the index must route ${path}`);
     }
   });
 });
 
-test("the authenticated tools succeed once the API key is set", async () => {
-  process.env.API_KEY = "test-key-not-a-real-secret";
-
+test("both Roblox security conventions are served", async () => {
   await withClient(async ({ client }) => {
-    const summary = await client.callTool({ name: "get_secure_summary", arguments: {} });
-    assert.notEqual(summary.isError, true);
-    assert.match(summary.content[0].text, /Authenticated/);
-
-    const search = await client.callTool({
-      name: "search_secure_data",
-      arguments: { query: "widgets" },
-    });
-    assert.notEqual(search.isError, true);
-    assert.match(search.content[0].text, /widgets/);
+    for (const path of CONVENTIONS) {
+      const text = textOf(
+        await client.callTool({ name: "roblox_security_instruction", arguments: { path } })
+      );
+      assert.ok(text.length > 500, `${path} came back empty or truncated`);
+    }
   });
 });
 
-test("the API key is never echoed back to the caller", async () => {
-  process.env.API_KEY = "test-key-not-a-real-secret";
+test("a traversal attempt reports not found and leaks nothing", async () => {
+  await withClient(async ({ client }) => {
+    for (const path of [
+      "../../package.json",
+      "../../../.git/config",
+      "roblox/../../package.json",
+      "/etc/passwd",
+      "C:\\Windows\\System32\\drivers\\etc\\hosts",
+    ]) {
+      const text = textOf(
+        await client.callTool({ name: "roblox_security_instruction", arguments: { path } })
+      );
+
+      assert.match(text, /^not found:/, `${path} must be refused`);
+      assert.doesNotMatch(text, /"name":/, `${path} must leak nothing`);
+      assert.doesNotMatch(text, /\[core\]/, `${path} must leak nothing`);
+    }
+  });
+});
+
+test("an unknown path inside the set reports not found", async () => {
+  await withClient(async ({ client }) => {
+    const text = textOf(
+      await client.callTool({
+        name: "roblox_security_instruction",
+        arguments: { path: "roblox/security/anti-cheat.md" },
+      })
+    );
+
+    assert.match(text, /^not found: roblox\/security\/anti-cheat\.md/);
+  });
+});
+
+test("the set root itself is not a file", async () => {
+  await withClient(async ({ client }) => {
+    const text = textOf(
+      await client.callTool({
+        name: "roblox_security_instruction",
+        arguments: { path: "." },
+      })
+    );
+
+    assert.match(text, /^not found:/);
+  });
+});
+
+test("no tool accepts a write verb", async () => {
+  await withClient(async ({ client }) => {
+    const { tools } = await client.listTools();
+
+    for (const tool of tools) {
+      const properties = Object.keys(tool.inputSchema.properties ?? {});
+      for (const name of ["action", "verb", "operation", "command", "body", "content"]) {
+        assert.equal(
+          properties.includes(name),
+          false,
+          `${tool.name} must not accept ${name}`
+        );
+      }
+    }
+  });
+});
+
+test("no tool accepts a credential", async () => {
+  await withClient(async ({ client }) => {
+    const { tools } = await client.listTools();
+
+    for (const tool of tools) {
+      const properties = Object.keys(tool.inputSchema.properties ?? {});
+      for (const name of ["apiKey", "api_key", "token", "secret", "password"]) {
+        assert.equal(
+          properties.includes(name),
+          false,
+          `${tool.name} must not accept ${name}`
+        );
+      }
+    }
+  });
+});
+
+test("the server needs no key to answer", async () => {
+  delete process.env.API_KEY;
 
   await withClient(async ({ client }) => {
-    for (const [name, args] of [
-      ["get_secure_summary", {}],
-      ["search_secure_data", { query: "widgets" }],
-    ]) {
-      const result = await client.callTool({ name, arguments: args });
-      assert.doesNotMatch(JSON.stringify(result), /test-key-not-a-real-secret/);
-    }
+    const text = textOf(
+      await client.callTool({
+        name: "roblox_security_instruction",
+        arguments: { path: "roblox/security/trust-boundaries.md" },
+      })
+    );
+
+    assert.ok(text.length > 500, "the set is served without a key");
   });
 });

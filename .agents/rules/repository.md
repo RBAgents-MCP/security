@@ -1,13 +1,13 @@
 ---
 name: repository-rules
-description: Rules specific to template - the dual-surface contract, the stdout ban, where things go, and what must not be introduced.
+description: Rules specific to rbagents-security - the dual-surface contract, the stdout ban, the read-only surface, and what must not be introduced.
 ---
 
 # Repository Rules
 
-`template` is a dual-purpose MCP server and CLI over one implementation, and it is
-also the template other LXAgents MCP repositories are scaffolded from. Both facts
-constrain what may be changed here.
+`rbagents-security` is a dual-purpose MCP server and CLI over one implementation, and it
+serves the Roblox security set from `content/` read-only. Both facts constrain what may be changed
+here.
 
 ## Mode and shared set
 
@@ -17,9 +17,9 @@ See the bootstrap block in [`../../AGENTS.md`](../../AGENTS.md).
 
 ## The two surfaces stay in step
 
-The CLI (`template`) and the MCP server (`template-server`) are two doors onto one
-implementation. A tool reachable from one is reachable from the other, with the same
-name and the same description.
+The CLI (`rbagents-security`) and the MCP server (`rbagents-security-server`) are two doors onto one
+implementation. A tool reachable from one is reachable from the other, with the same name
+and the same description.
 
 * Tools are declared in exactly one place: `src/server.js`.
 * `src/cli.js` never maintains its own list - it reads the declaration from
@@ -41,7 +41,9 @@ that names nothing useful.
 
 | Thing | Path |
 |---|---|
+| The served set | `content/` |
 | Tool declarations | `src/server.js` |
+| Path resolution and the traversal defence | `src/content.js` |
 | CLI commands | `src/cli.js` |
 | Transport and entry point | `src/index.js` |
 | Tests | `test/{subject}.test.js` |
@@ -63,8 +65,8 @@ npm run inspect   # MCP Inspector against the stdio server
 * A second source of truth for the tool list.
 * Shared instruction content. If it can be read from `agents://`, it must not exist
   here as a file.
-
-## Template mode
-
-While `PROMPT.md` still exists at the root, this repository is a template and the
-extra rules in [`template-mode.md`](template-mode.md) apply.
+* A write path. No tool may take a verb, a credential, or reach a network. The
+  read-only property is structural - the code that would write is absent - and it is
+  the property a consuming repository depends on when it points at this server.
+* An edit to a file under `content/`. Those files are copied from the upstream
+  workspace set; the change belongs there, and this repository follows it.

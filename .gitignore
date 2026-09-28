@@ -6,3 +6,6 @@ coverage/
 
 # Local MCP server clones - runtimes, never vendored content
 mcps/
+
+# Untracked working plan - never staged, never committed
+/.agents/plans/

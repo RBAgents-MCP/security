@@ -1,40 +1,38 @@
 ---
 name: agent-wiki-context-repository-map
-description: Orientation for template - what lives where, how to build and test it, the two surfaces, and the gotchas that bite first.
+description: Orientation for rbagents-security - what lives where, how to build and test it, the two surfaces, and the gotchas that bite first.
 ---
 
 # Repository Map
 
-Read this before touching anything in `template`.
+Read this before touching anything in `rbagents-security`.
 
 ## What this repository is
 
-An MCP server and a CLI over one implementation, and the template every other LXAgents
-MCP repository is scaffolded from. Node.js 20+, ESM (`"type": "module"`), **no build
-step** - the published package ships `src/` and Node runs it directly.
+An MCP server and a CLI over one implementation, serving the Roblox security set read-only. Node.js 20+,
+ESM (`"type": "module"`), **no build step** - the published package ships `src/` and Node
+runs it directly.
 
-* Remote: `LXAgents-MCP/template`, default branch `master`.
-* Package: `@mcagents-mcp/template`.
-* Bins: `template` (CLI) and `template-server` (MCP server).
+* Remote: `RBAgents-MCP/security`, default branch `master`.
+* Bins: `rbagents-security` (CLI) and `rbagents-security-server` (MCP server).
 
 ## Layout
 
 ```
 AGENTS.md                     entry point, connector bootstrap, trigger table
-PROMPT.md                     scaffolding procedure - present only while this is a template
 package.json                  both bins, no build step
+content/                      the published set - the product
+  index/                      the routing index
 src/
   index.js                    entry point; picks stdio or streamable HTTP, owns the HTTP server
   server.js                   builds the McpServer and registers every tool; exports listTools()
+  content.js                  resolves a path inside content/, with the traversal defence
   cli.js                      the CLI: help, version, tools, serve
   version.js                  reads version out of package.json at import
   tools/
-    get_server_time.js        sample: no parameters, no API key
-    get_secure_summary.js     sample: no parameters, API key required
-    calculate_sum.js          sample: zod parameters, no API key
-    search_secure_data.js     sample: zod parameters, API key required
+    the Roblox security set.js the only tool: read one file from the set by path
 test/
-  server.test.js              tool registration, schemas, API-key behaviour, surface parity
+  server.test.js              registration, schema, every file, traversal, surface parity
 wiki/                         human documentation
 .agents/                      this set - rules, agent wiki, memory, indexes
 ```
@@ -54,9 +52,10 @@ wiki/                         human documentation
 
 | Variable | Read by | Effect |
 |---|---|---|
-| `API_KEY` | tool handlers | The single server-wide key. Absent, the authenticated tools throw. |
 | `MCP_TRANSPORT` | `src/index.js` | `stdio` (default) or `http`. |
 | `PORT` | `src/index.js` | HTTP port, default `3000`. |
+
+There is no `API_KEY`. Nothing here reaches an external service.
 
 ## The two surfaces
 
@@ -72,14 +71,18 @@ suite.
   corrupts the JSON-RPC stream. Log to stderr. Only CLI commands print.
 * **Tool schemas are raw shapes.** `server.tool()` wants `{ a: z.number() }`, not
   `z.object({ ... })`. Wrapping it silently produces a tool with no parameters.
-* **The API key is read inside handlers**, never at import - see
-  [`../../rules/secrets.md`](../../rules/secrets.md).
+* **Reject `..` before the filesystem call.** A check that runs after `fs` is checking a
+  value the caller already influenced. `src/content.js` does both: the segment check
+  first, the containment check after, and the second is redundant on purpose.
 * **A fresh `McpServer` per HTTP request.** `src/index.js` builds and closes one per
   request because `McpServer` holds per-connection state. Do not hoist it to module
   scope.
-* **The four tools in `src/tools/` are samples** and are deleted at scaffold time.
-  Nothing outside that folder may depend on them - see
-  [`../../rules/template-mode.md`](../../rules/template-mode.md).
+* **`content/` is the product, not a source folder.** Every file in it is served
+  verbatim on the next boot, with its frontmatter intact. `src/` is local; a change to
+  `content/` changes what every consuming repository reads.
+* **Do not add a write path.** The single-tool read-only surface is the property a
+  consuming repository depends on. See
+  [`../../rules/tool-authoring.md`](../../rules/tool-authoring.md).
 * **`version.js` reads `package.json` at import** via a path relative to `src/`. Moving
   it breaks the version without failing a test.
 

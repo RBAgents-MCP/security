@@ -5,9 +5,18 @@ description: The contract for adding a tool - one file per tool under src/tools/
 
 # Tool Authoring
 
-One tool is one file. This is what keeps the tool layer reviewable, lets a scaffolding
-agent delete the samples cleanly, and stops `src/server.js` growing into the array this
-layer replaced.
+One tool is one file. This is what keeps the tool layer reviewable and stops
+`src/server.js` growing into the array this layer replaced.
+
+## The surface is read-only
+
+This server has one tool and it is a read. Do not add a tool that takes a verb, a
+credential, or a network call.
+
+The property is **structural**: the code that would write is absent, not disabled behind
+a check. That is stronger than a permission check on a general-purpose tool, and it is
+what a consuming repository depends on when it points at this server — it cannot mutate
+the set, because there is nothing here that mutates anything.
 
 ## File shape
 
@@ -18,16 +27,19 @@ name character for character. It exports two things and a default that pairs the
 import { z } from "zod";
 
 export const config = {
-  name: "calculate_sum",
-  description: "Add two numbers and return the sum. Requires no API key.",
+  name: "roblox_security_instruction",
+  description: "Read one convention from the set by path, e.g. 'index/roblox-index.md'. Read-only - this tool cannot write.",
   schema: {
-    a: z.number().describe("The first addend."),
-    b: z.number().describe("The second addend."),
+    path: z.string().describe("Path inside the set, e.g. 'roblox/language/luau-authoring.md'. Never a leading slash, never '..'."),
   },
 };
 
-export async function handler({ a, b }) {
-  return { content: [{ type: "text", text: String(a + b) }] };
+export async function handler({ path }) {
+  const text = await readSetFile(path);
+  if (text === null) {
+    return { content: [{ type: "text", text: `not found: ${path}` }] };
+  }
+  return { content: [{ type: "text", text }] };
 }
 
 export default { config, handler };
@@ -68,9 +80,18 @@ to both.
 
 ## Authentication
 
-A tool that needs the server's API key checks for it **inside the handler** - see
-[`secrets.md`](secrets.md). Never at module scope, and never as a condition on whether
-the tool is registered.
+No tool in this repository needs a credential. If one ever did, it checks **inside the
+handler** — see [`secrets.md`](secrets.md). Never at module scope, and never as a
+condition on whether the tool is registered.
+
+## Paths into `content/`
+
+A tool that reads from the set goes through `readSetFile` in `src/content.js`. Do not call
+`fs` directly from a handler: the traversal defence lives in that one place, and a second
+path to the filesystem is a second thing to get right.
+
+Return `not found` as ordinary content for an unknown path. That is a lookup miss, not a
+server fault, and a thrown error would be indistinguishable from a real failure.
 
 ## Errors
 

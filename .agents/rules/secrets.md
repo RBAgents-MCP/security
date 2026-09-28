@@ -1,12 +1,16 @@
 ---
 name: secrets
-description: One unified API key for the whole server - read it from process.env inside the handler, fail descriptively, and never log or echo it.
+description: The contract for a tool that needs a credential - read it from process.env inside the handler, fail descriptively, and never log or echo it.
 ---
 
 # Secrets
 
-This server authenticates with **one unified key for the whole server**, not one key
-per tool. It is read from `process.env.API_KEY`.
+**No tool in this repository reads a credential.** Nothing here reaches an external
+service, so there is no key and no `API_KEY` variable. This file is the contract to follow
+*if* a future tool needs one, and the record of why none does today.
+
+The key would be **one for the whole server**, not one per tool, read from
+`process.env.API_KEY`.
 
 ## Read it inside the handler, at call time
 
@@ -15,7 +19,7 @@ export async function handler({ query }) {
   const apiKey = process.env.API_KEY;
   if (!apiKey) {
     throw new Error(
-      "search_secure_data requires an API key. Set the API_KEY environment variable " +
+      "<tool_name> requires an API key. Set the API_KEY environment variable " +
         "before starting the server."
     );
   }

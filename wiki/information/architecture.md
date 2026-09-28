@@ -7,9 +7,11 @@ code generation.
 src/
   index.js     entry point: picks a transport, owns the HTTP server
   server.js    builds the McpServer, registers every tool, exports listTools()
+  content.js   resolves a path inside content/, with the traversal defence
   cli.js       the CLI: help, version, tools, serve
   version.js   reads the version out of package.json at import
   tools/       one file per tool
+content/       the published set
 ```
 
 ## Entry point and transports
@@ -40,16 +42,17 @@ Each tool is one file at `src/tools/{tool_name}.js`, exporting a `config` and a
 
 ```js
 export const config = {
-  name: "calculate_sum",
-  description: "Add two numbers and return the sum. Requires no API key.",
+  name: "the Roblox security set",
+  description: "Read one convention from the set by path, e.g. 'index/roblox-security-index.md'…",
   schema: {                              // optional
-    a: z.number().describe("The first addend."),
-    b: z.number().describe("The second addend."),
+    path: z.string().describe("Path inside the set, e.g. 'index/roblox-security-index.md'. Never a leading slash, never '..'."),
   },
 };
 
-export async function handler({ a, b }) {
-  return { content: [{ type: "text", text: String(a + b) }] };
+export async function handler({ path }) {
+  const text = await readSetFile(path);
+  if (text === null) return { content: [{ type: "text", text: `not found: ${path}` }] };
+  return { content: [{ type: "text", text }] };
 }
 
 export default { config, handler };
@@ -68,26 +71,30 @@ A tool that declares no `schema` is registered with the three-argument form inst
 The MCP SDK wraps it itself and converts it to the JSON Schema the client sees;
 wrapping it first produces a tool that advertises no parameters and receives none.
 
+## Reading from the set
+
+Every served file is resolved inside `src/content.js`, and the boundary is the constant
+`CONTENT_DIR` rather than anything a caller passed in.
+
+`readSetFile` rejects a `..` segment **before** it calls the filesystem. A path that
+reaches `fs` with a `..` in it has already been resolved against the process working
+directory, so a check that runs afterwards is checking a value the caller already
+influenced. It then confirms the resolved path is still inside `CONTENT_DIR` — redundant
+by design, so that weakening the first check cannot silently widen what is reachable.
+
+An unreadable or unknown path returns `null`, which the tool turns into `not found` as
+ordinary content. A traversal attempt and a typo are indistinguishable from outside,
+which is the point. A thrown error would be distinguishable.
+
 ## Authentication
 
-There is one key for the whole server, `process.env.API_KEY`, and it is read **inside
-the handler** of each tool that needs it:
+There is none. No tool in this repository reads a credential, and none opens a socket.
 
-```js
-const apiKey = process.env.API_KEY;
-if (!apiKey) throw new Error("search_secure_data requires an API key. Set …");
-```
-
-Reading it at call time rather than at import means a process that sets the key after
-startup still works, and it keeps the stateless HTTP path correct — the module cache
-outlives any single request.
-
-Registration never depends on the key. Every tool is advertised whether or not one is
-set, because a server that hides its authenticated tools reports "no such tool", which
-is indistinguishable from the tool not existing.
-
-Thrown errors become error results for the caller; the SDK does that conversion, so a
-handler never hand-builds one.
+The template this repository was scaffolded from took one server-wide `API_KEY` and read
+it inside the handler of each tool that needed it. That pattern is still recorded in
+[`.agents/rules/secrets.md`](../../../.agents/rules/secrets.md) for a tool that does
+need one — the requirement is to read it at call time rather than at import, and never to
+make registration depend on it.
 
 ## The parity guarantee
 

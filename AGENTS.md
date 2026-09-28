@@ -1,15 +1,20 @@
 ---
 name: agents-entry-point
-description: Entry point for template - a dual-purpose MCP server and CLI, and the template LXAgents MCP repositories are scaffolded from.
+description: Entry point for rbagents-security - a read-only MCP server and CLI that serves the Roblox security set.
 ---
 
 # AGENTS.md
 
-This repository is `template`: an MCP server (`template-server`) and a CLI (`template`)
-over one implementation, Node.js 20+, ESM, no build step. It is also the template other
-LXAgents MCP repositories are scaffolded from, which is why `PROMPT.md` exists at the
-root. It consumes the LXAgents shared agent instruction set through the
-`lxagents-agents-base` connector rather than keeping its own copy of it.
+This repository is `rbagents-security`: an MCP server (`rbagents-security-server`) and a CLI (`rbagents-security`)
+over one implementation, Node.js 20+, ESM, no build step. It serves **the Roblox security set** —
+read-only, from [`content/`](content/).
+
+It is **not** a replacement for the org-wide conventions. A repository that needs them
+resolves this server *and* `lxagents-agents-base`: the org set governs how the branch is
+named and how the commit is written, this one governs what goes in it.
+
+It consumes the LXAgents shared agent instruction set through the `lxagents-agents-base`
+connector rather than keeping its own copy of it.
 
 ## Shared Instruction Set
 
@@ -103,21 +108,24 @@ interleaved.
 | Need project facts, commands, or orientation | [`.agents/wiki/context/repository-map.md`](.agents/wiki/context/repository-map.md) |
 | Do anything at all in this project | [`.agents/rules/repository.md`](.agents/rules/repository.md) |
 | Add, change, or remove a tool | [`.agents/rules/tool-authoring.md`](.agents/rules/tool-authoring.md) |
-| Touch the API key, an environment variable, or any secret | [`.agents/rules/secrets.md`](.agents/rules/secrets.md) |
-| Change the sample tools, `PROMPT.md`, or anything a scaffolded project inherits | [`.agents/rules/template-mode.md`](.agents/rules/template-mode.md) |
-| Scaffold a new project from this template | [`PROMPT.md`](PROMPT.md) |
+| Touch an environment variable, a credential, or any secret | [`.agents/rules/secrets.md`](.agents/rules/secrets.md) |
+| Add, change, or remove anything under `content/` | [`agents://creators/index-creator.md`](agents://creators/index-creator.md) |
 
 `agents://rules/duplicate-instruction-audit.md` is the one rule that does **not**
 auto-activate: it runs on request only.
 
-## Project Scaffolding (Template Mode)
+## The set is the product
 
-This repository is currently a template. If the user asks to initialize, scaffold, or
-set up a new project based on this template, you must immediately read
-[`PROMPT.md`](PROMPT.md) at the root of this repository and follow its instructions to
-gather requirements and modify the codebase. The extra rules that apply while this is
-still a template are in
-[`.agents/rules/template-mode.md`](.agents/rules/template-mode.md).
+[`content/`](content/) is not a source folder. Every file in it is served verbatim to
+whatever repository connects, with its frontmatter intact, and a change lands on the
+next boot. There is no draft space inside it.
+
+A convention change belongs **upstream**, in the workspace set that authors it, and is
+then copied here. This repository is a delivery surface for that set, not its editor.
+
+The surface is read-only by construction: no tool takes a verb, none takes a credential,
+and none opens a socket. Do not add a write path — that property is what a consuming
+repository relies on.
 
 ## Reading order
 
