@@ -1,6 +1,6 @@
 ---
 name: logs-index
-description: Release history of template, newest version first - what changed in each version and where its changelog lives.
+description: Release history of rbagents-security, newest version first - what changed in each version and where its changelog lives.
 ---
 
 # Logs Index

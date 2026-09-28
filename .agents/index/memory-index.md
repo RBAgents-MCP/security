@@ -1,6 +1,6 @@
 ---
 name: memory-index
-description: Index of .agents/memory/ - repository state, decisions, and task records. Read every session so work continues rather than restarts.
+description: Index of .agents/memory/ - repository state and decisions. Read every session so work continues rather than restarts.
 ---
 
 # Memory Index
@@ -28,8 +28,6 @@ current request.
 
 | File | Purpose |
 |---|---|
-| [`../memory/tasks/mcp-tools-refactor.md`](../memory/tasks/mcp-tools-refactor.md) | Adopting the shared instruction set and refactoring the tool layer onto per-file modules. |
-
 ## Maintenance
 
 Any file added to or removed from `.agents/memory/` is reflected here **in the same

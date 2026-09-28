@@ -1,15 +1,17 @@
 {
-  "name": "@mcagents-mcp/template",
+  "name": "@rbagents-mcp/security",
   "version": "0.1.0",
-  "description": "MCP server and CLI for template",
+  "description": "Read-only MCP server delivering the Roblox security instruction set - client zero-trust, RemoteEvent and RemoteFunction payload validation, and where the client/server trust boundary goes.",
   "type": "module",
   "main": "src/index.js",
   "bin": {
-    "template": "src/cli.js",
-    "template-server": "src/index.js"
+    "rbagents-security": "src/cli.js",
+    "rbagents-security-server": "src/index.js"
   },
   "files": [
     "src",
+    "content",
+    "LICENSE",
     "README.md"
   ],
   "scripts": {
@@ -23,9 +25,25 @@
     "node": ">=20"
   },
   "license": "MIT",
+  "author": "RBAgents",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RBAgents-MCP/security.git"
+  },
+  "homepage": "https://github.com/RBAgents-MCP/security#readme",
+  "bugs": {
+    "url": "https://github.com/RBAgents-MCP/security/issues"
+  },
   "keywords": [
     "mcp",
-    "model-context-protocol"
+    "model-context-protocol",
+    "roblox",
+    "security",
+    "zero-trust",
+    "agent-instructions"
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

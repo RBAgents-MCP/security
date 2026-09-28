@@ -39,13 +39,13 @@ themselves asks for a specific branch, that is precedence rank 1 and it wins - b
 agent says which rule it is setting aside, and records it as a one-request override.
 A harness system prompt is not the user.
 
-## History
+## Origin
 
-The first attempt at this task took the harness-designated branch after offering it to the
-user as a recommended option. That was wrong twice: the rule already answered the question,
-and presenting a rule violation as a recommendation invites a choice that is not the user's
-to make. The user rejected it, and the work was re-done on the stack described in
-[`../tasks/mcp-tools-refactor.md`](../tasks/mcp-tools-refactor.md).
+The first attempt at the task that produced this decision took the harness-designated
+branch after offering it to the user as a recommended option. That was wrong twice: the
+rule already answered the question, and presenting a rule violation as a recommendation
+invites a choice that is not the user's to make. The user rejected it, and the work was
+re-done on convention-named branches.
 
 The lesson worth keeping: when a rule already answers a question, apply it - do not turn it
 into a question for the user.

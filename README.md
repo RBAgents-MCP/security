@@ -1,24 +1,61 @@
-# template
+# rbagents-security
 
-MCP server and CLI for template.
+The Roblox security instruction set, served read-only over MCP.
 
-- **Organization:** `LXAgents-MCP`
-- **Repository:** `template`
-- **Server ID:** `template`
-- **Package:** `@mcagents-mcp/template`
-- **Dual-purpose:** a CLI (`template`) and an MCP server (`template-server`).
+- **Organization:** `RBAgents-MCP`
+- **Repository:** `security`
+- **Server ID:** `rbagents-security`
+- **Package:** `@rbagents-mcp/security`
+- **Dual-purpose:** a CLI (`rbagents-security`) and an MCP server
+  (`rbagents-security-server`).
 
-One implementation behind two surfaces, so a result produced through the CLI is
-identical to the same result produced through an MCP client. Node.js 20+, ESM, no build
-step.
+The set is two files: **client zero-trust** and **trust boundaries**. Written once and
+served to every Roblox repository. One implementation behind two surfaces, so a result
+produced through the CLI is identical to the same result produced through an MCP client.
+Node.js 20+, ESM, no build step.
 
-## Features
+## The one tool
 
-- MCP server over **stdio** and **streamable HTTP**, with a `/healthz` endpoint.
-- A CLI with `help`, `version`, `tools`, and `serve`.
-- One file per tool under `src/tools/`, with optional [zod](https://zod.dev) parameters
-  and an optional server-wide API key.
-- A test suite that pins the CLI and the MCP server to the same tool list.
+| Tool | Parameters | Returns |
+|---|---|---|
+| `roblox_security_instruction` | `path` (string) | One file from `content/`, verbatim |
+
+Read `index/roblox-security-index.md` first. It routes the two files by the question you
+are trying to answer.
+
+There is no write path. No tool accepts a verb, no tool takes a credential, and no tool
+reaches a network. The code that would write is absent rather than disabled, so pointing a
+repository at this server cannot mutate the set.
+
+## Why this exists separately
+
+A repository whose whole scope is *do not trust the client* should not ship a tool that
+summarises or searches an external service on a caller's behalf with a stored key. That is
+the sharpest reason the four inherited sample tools are gone from this repository.
+
+## Which servers a Roblox repository resolves
+
+| Server | Holds | Required |
+|---|---|---|
+| `lxagents-agents-base` | Branch strategy, commit conventions, task workflow, pull requests | **Yes — every repository** |
+| `rbagents-shared-instruction` | Roblox development conventions — Luau, Rojo, package architecture, data stores, auras, naming | Roblox repositories |
+| `rbagents-security` (this one) | The two files below | Roblox repositories |
+| `lxagents-security` | Language-agnostic web security — python, javascript/typescript, go | Only with a web backend |
+
+The two Roblox security files are **also** served by `rbagents-shared-instruction`, because
+they belong to the Roblox development set there. A repository can read them through either
+server; the overlap is deliberate, so installing only the development set still gets the
+security rules.
+
+## The set
+
+```
+content/
+  index/roblox-security-index.md              the router
+  roblox/security/
+    zero-trust-networking.md                  validate every payload, before the state change
+    trust-boundaries.md                       what the client may ask for at all
+```
 
 ## Quick start
 
@@ -29,26 +66,18 @@ npm run cli -- tools
 npm start
 ```
 
-Tools that require authentication read one key for the whole server:
+No key, no environment variable, no configuration. The server starts and answers with
+nothing set.
 
-```bash
-export API_KEY="your-key-here"
-```
+## Register it
 
-Leave it unset and everything still starts — only calling an authenticated tool fails.
+| Transport | How |
+|---|---|
+| Local stdio | `command: node`, `args: ["src/index.js"]`, `cwd:` this checkout |
+| Local HTTP | `npm run start:http`, then `http://localhost:3000/mcp` |
+| Remote | Settings → Connectors → Add custom connector → `https://<host>/mcp` |
 
-## Sample tools
-
-Four tools ship with this template to demonstrate the four combinations of *takes
-parameters* and *requires an API key*. **They are deleted when a real project is
-scaffolded from it.**
-
-| Tool | Parameters | API key |
-|---|---|---|
-| `get_server_time` | none | no |
-| `get_secure_summary` | none | yes |
-| `calculate_sum` | `a`, `b` | no |
-| `search_secure_data` | `query` | yes |
+The `/mcp` path is not optional on either HTTP form.
 
 ## Documentation
 
@@ -61,16 +90,17 @@ scaffolded from it.**
 
 Full map: [`.agents/index/project-wiki-index.md`](.agents/index/project-wiki-index.md).
 
-## Scaffolding a new project
-
-This repository is a template. To turn it into a real project, follow
-[`PROMPT.md`](PROMPT.md).
-
 ## Working with agents
 
 Start at [`AGENTS.md`](AGENTS.md). Shared conventions — branching, commits, pull
 requests, the task workflow — are served by the `lxagents-agents-base` MCP connector and
 are not stored in this repository.
+
+## Provenance
+
+The two files under `content/roblox/security/` are copied verbatim from the workspace
+`roblox` set with their frontmatter intact. A convention change belongs there first; this
+repository is a delivery surface for it, not its editor.
 
 ## License
 

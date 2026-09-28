@@ -1,6 +1,6 @@
 # Local Setup
 
-`@mcagents-mcp/template` is **dual-purpose**. The same code is reachable two ways:
+`rbagents-security` is **dual-purpose**. The same code is reachable two ways:
 
 | Mode | What it is | Who uses it |
 |---|---|---|
@@ -21,17 +21,11 @@ npm test
 
 Two dependencies: `@modelcontextprotocol/sdk` and `zod`.
 
-## Authentication
+## No authentication
 
-Tools that need authentication read one server-wide key from `API_KEY`:
-
-```bash
-export API_KEY="your-key-here"
-```
-
-Leave it unset and the server still starts and still lists every tool — only calling an
-authenticated tool fails, with a message naming the tool and the variable. Full list of
-variables: [`env.md`](env.md).
+Nothing here reaches an external service, so there is no key to set and no environment
+variable to configure. The server starts, lists its tool, and answers every request with
+nothing configured. Full list of variables: [`env.md`](env.md).
 
 ## CLI mode
 
@@ -43,7 +37,7 @@ npm install
 npm link
 
 # Or globally, from the registry
-npm install -g @mcagents-mcp/template
+npm install -g @rbagents-mcp/security
 ```
 
 Without installing anything:
@@ -56,18 +50,15 @@ npm run cli -- --help
 ### Use
 
 ```bash
-template --help
-template --version
-template tools
+rbagents-security --help
+rbagents-security --version
+rbagents-security tools
 ```
 
 `tools` prints every registered tool with its description:
 
 ```text
-get_server_time     Return the server's current time as an ISO 8601 timestamp in UTC. …
-get_secure_summary  Return a short authenticated status summary. …
-calculate_sum       Add two numbers and return the sum. Requires no API key.
-search_secure_data  Search the protected dataset and return matching records. …
+the Roblox security set  Read one convention from the set by path, e.g. 'index/roblox-security-index.md'. …
 ```
 
 The list comes from `listTools()` in `src/server.js` — the same list the MCP server
@@ -86,16 +77,16 @@ registers — so the two surfaces cannot disagree.
 ### Install
 
 An MCP client spawns the server as a subprocess, so installing it means pointing the
-client at it. Either bin works: `template-server` is the server directly, and
-`template serve` reaches the same server through the CLI.
+client at it. Either bin works: `rbagents-security-server` is the server directly, and
+`rbagents-security serve` reaches the same server through the CLI.
 
 ```json
 {
   "mcpServers": {
-    "template": {
+    "rbagents-security": {
       "command": "node",
       "args": ["src/index.js"],
-      "cwd": "/path/to/template"
+      "cwd": "/path/to/security"
     }
   }
 }
@@ -106,8 +97,8 @@ Once the package is installed globally, the bin can be named directly instead:
 ```json
 {
   "mcpServers": {
-    "template": {
-      "command": "template-server"
+    "rbagents-security": {
+      "command": "rbagents-security-server"
     }
   }
 }
@@ -121,11 +112,11 @@ For a remote connector, point the client at `https://<host>/mcp`, including the
 ```bash
 # stdio
 npm start
-template serve --stdio
+rbagents-security serve --stdio
 
 # streamable HTTP
 npm run start:http
-template serve --http --port 3000
+rbagents-security serve --http --port 3000
 ```
 
 Check it is up:
