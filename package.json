@@ -1,0 +1,34 @@
+{
+  "name": "@mcagents-mcp/template",
+  "version": "0.1.0",
+  "description": "MCP server and CLI for template",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "template": "src/cli.js",
+    "template-server": "src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node src/index.js",
+    "start:http": "MCP_TRANSPORT=http node src/index.js",
+    "cli": "node src/cli.js",
+    "test": "node --test",
+    "inspect": "npx @modelcontextprotocol/inspector node src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "model-context-protocol"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.5.4"
+  }
+}
