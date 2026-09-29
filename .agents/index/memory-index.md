@@ -28,6 +28,7 @@ current request.
 
 | File | Purpose |
 |---|---|
+| [`../memory/tasks/per-file-tools.md`](../memory/tasks/per-file-tools.md) | The per-file tool surface: what shipped, the real baseline and final test counts, why `src/content.js` went, and what was reported rather than fixed. |
 | [`../memory/tasks/http-transport-and-docker.md`](../memory/tasks/http-transport-and-docker.md) | HTTP transport hardening and the container image: what shipped, the decisions, and why the image is still unbuilt. |
 
 ## Maintenance
