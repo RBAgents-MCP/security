@@ -14,18 +14,22 @@ served to every Roblox repository. One implementation behind two surfaces, so a 
 produced through the CLI is identical to the same result produced through an MCP client.
 Node.js 20+, ESM, no build step.
 
-## The one tool
+## The three tools
 
-| Tool | Parameters | Returns |
+One tool per file, generated from `content/`. **None of them takes an argument.**
+
+| Tool | File | Returns |
 |---|---|---|
-| `roblox_security_instruction` | `path` (string) | One file from `content/`, verbatim |
+| `roblox_security_index` | `index/roblox-security-index.md` | The router |
+| `trust_boundaries` | `roblox/security/trust-boundaries.md` | What the client may ask for at all |
+| `zero_trust_networking` | `roblox/security/zero-trust-networking.md` | Validate every payload, before the state change |
 
-Read `index/roblox-security-index.md` first. It routes the two files by the question you
-are trying to answer.
+Start at `roblox_security_index` — it routes the two conventions by the question you are
+trying to answer — or call a convention directly when you already know which one you need.
 
-There is no write path. No tool accepts a verb, no tool takes a credential, and no tool
-reaches a network. The code that would write is absent rather than disabled, so pointing a
-repository at this server cannot mutate the set.
+There is no write path, and no path *argument*: no tool accepts a verb, no tool takes a
+credential, and no tool reaches a network. The code that would write is absent rather than
+disabled, so pointing a repository at this server cannot mutate the set.
 
 ## Why this exists separately
 

@@ -25,7 +25,7 @@ Two dependencies: `@modelcontextprotocol/sdk` and `zod`.
 
 Nothing here reaches an external service, so there is **no key to set**. There are
 four environment variables, and all of them are optional — the server starts, lists its
-tool, and answers every request with none of them set. Full list:
+three tools, and answers every request with none of them set. Full list:
 [`env.md`](env.md).
 
 Two of them are worth knowing about before you expose this over HTTP rather than
@@ -63,11 +63,14 @@ rbagents-security tools
 `tools` prints every registered tool with its description:
 
 ```text
-the Roblox security set  Read one convention from the set by path, e.g. 'index/roblox-security-index.md'. …
+roblox_security_index  Router for the Roblox security set — two files, on the client trust boundary. Read this first.
+trust_boundaries       What the client may ask for versus what only the server may decide, where secrets may live, and the shape of an OnServerEvent handler.
+zero_trust_networking  The client is untrusted — validate every RemoteEvent and RemoteFunction payload on the server before any state changes.
 ```
 
 The list comes from `listTools()` in `src/server.js` — the same list the MCP server
-registers — so the two surfaces cannot disagree.
+registers — so the two surfaces cannot disagree. It is generated from `content/`, so it
+has no arguments: a tool name is the whole call.
 
 ### Exit codes
 

@@ -1,16 +1,16 @@
 # Architecture
 
-Six source files and a folder of tools. There is no framework, no build step, and no
-code generation.
+Five source files, one of which generates the tool surface. There is no framework and no
+build step.
 
 ```
 src/
   index.js     entry point: picks a transport, owns the HTTP server
   server.js    builds the McpServer, registers every tool, exports listTools()
-  content.js   resolves a path inside content/, with the traversal defence
   cli.js       the CLI: help, version, tools, serve
   version.js   reads the version out of package.json at import
-  tools/       one file per tool
+  tools/
+    from-content.js  builds one tool per file in content/, at import
 content/       the published set
 Dockerfile     the same two, on a pinned runtime
 ```
@@ -28,7 +28,7 @@ The HTTP transport is **stateless**: a fresh `McpServer` and transport are built
 each request and closed when the response closes. That is deliberate — `McpServer`
 holds per-connection state, so hoisting one to module scope would leak state between
 unrelated callers. `test/http.test.js` asserts it with two simultaneous calls for
-different paths, each getting its own answer.
+different tools, each getting its own answer.
 
 Three guards sit in front of `/mcp`, all in `src/index.js`, all off by default:
 
@@ -63,54 +63,51 @@ and not the other. So the HTTP startup line and the shutdown line go to stderr t
 
 ## The tool layer
 
-Each tool is one file at `src/tools/{tool_name}.js`, exporting a `config` and a
-`handler`:
+The tool surface is **generated from `content/`**, not declared in code.
+`src/tools/from-content.js` walks the set at import and builds one tool per markdown
+file:
 
 ```js
-export const config = {
-  name: "the Roblox security set",
-  description: "Read one convention from the set by path, e.g. 'index/roblox-security-index.md'…",
-  schema: {                              // optional
-    path: z.string().describe("Path inside the set, e.g. 'index/roblox-security-index.md'. Never a leading slash, never '..'."),
-  },
-};
-
-export async function handler({ path }) {
-  const text = await readSetFile(path);
-  if (text === null) return { content: [{ type: "text", text: `not found: ${path}` }] };
-  return { content: [{ type: "text", text }] };
-}
-
-export default { config, handler };
+files.set(name, path);
+tools.push({
+  config: { name, description: frontmatter.description },
+  handler: async () => ({ content: [{ type: "text", text }] }),
+});
 ```
 
-`src/server.js` imports each module individually, collects them into one
-`TOOL_MODULES` array, and registers each:
+The name is the file's own basename with `.md` dropped, lowercased, and kebab turned to
+snake. The description is the file's frontmatter `description:` — the same text a client
+would have read by opening the file, so a tool a caller cannot route on is a startup
+error rather than a tool with an empty description.
+
+`src/server.js` freezes that array as `TOOL_MODULES` and registers each entry with the
+three-argument form:
 
 ```js
-server.tool(config.name, config.description, config.schema, handler);
+server.tool(config.name, config.description, handler);
 ```
 
-A tool that declares no `schema` is registered with the three-argument form instead.
+There is no schema branch, because no tool declares a schema. That is the design, not an
+omission: **there is no argument, so there is no path for a caller to traverse with.**
+The three-argument form is what makes the tool layer boring, and a tool that grew an
+argument would have to stop being generated to get it.
 
-`schema` is a **zod raw shape** — a plain object of validators, not a `z.object(...)`.
-The MCP SDK wraps it itself and converts it to the JSON Schema the client sees;
-wrapping it first produces a tool that advertises no parameters and receives none.
+Two failures are startup errors rather than silent ones: a name that is not a usable MCP
+tool name, and two files that derive the same name. The second would otherwise let one
+file shadow another, and the error message says which two.
 
 ## Reading from the set
 
-Every served file is resolved inside `src/content.js`, and the boundary is the constant
-`CONTENT_DIR` rather than anything a caller passed in.
+Everything is resolved **once, at import**, and a call is a map lookup. There is no
+filesystem I/O on the read path, and no argument a caller could have reached the
+filesystem with — so a malformed set fails the process at boot rather than surfacing as a
+wrong answer to the first caller that needed the file.
 
-`readSetFile` rejects a `..` segment **before** it calls the filesystem. A path that
-reaches `fs` with a `..` in it has already been resolved against the process working
-directory, so a check that runs afterwards is checking a value the caller already
-influenced. It then confirms the resolved path is still inside `CONTENT_DIR` — redundant
-by design, so that weakening the first check cannot silently widen what is reachable.
+`CONTENT_DIR` is resolved from `import.meta.url` inside `from-content.js`, so it does not
+depend on the working directory the server happens to be started in.
 
-An unreadable or unknown path returns `null`, which the tool turns into `not found` as
-ordinary content. A traversal attempt and a typo are indistinguishable from outside,
-which is the point. A thrown error would be distinguishable.
+The file is served whole, frontmatter included, byte-identical to what the set holds. The
+frontmatter is part of the published text, not metadata to strip.
 
 ## Authentication
 
@@ -134,13 +131,15 @@ make registration depend on it.
 
 ## The parity guarantee
 
-`src/server.js` holds the only tool list. `listTools()` derives name/description pairs
-from the same `TOOL_MODULES` array used for registration, and `src/cli.js` prints that
-rather than keeping a list of its own.
+`src/tools/from-content.js` holds the only tool list, and it is derived from `content/`
+rather than written down. `listTools()` derives name/description pairs from the same
+`TOOL_MODULES` array used for registration, and `src/cli.js` prints that rather than
+keeping a list of its own.
 
 `test/server.test.js` asserts that what the CLI would print matches what an MCP client
-receives from `tools/list`, so the two surfaces cannot drift apart without failing the
-suite.
+receives from `tools/list`, and that the tool list and the files on disk are a bijection
+in both directions — so neither surface can drift apart, and neither can the set, without
+failing the suite.
 
 ## Related pages
 
