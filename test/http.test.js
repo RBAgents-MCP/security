@@ -16,7 +16,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { SERVER_ID } from "../src/server.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { SERVER_ID, createServer } from "../src/server.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ENTRY = join(ROOT, "src", "index.js");
@@ -133,6 +134,72 @@ async function connect(port) {
   return client;
 }
 
+/** The text of a single-content tool result. */
+function textOf(result) {
+  assert.notEqual(result.isError, true, "expected a successful result");
+  assert.equal(result.content.length, 1, "expected exactly one content block");
+  return result.content[0].text;
+}
+
+/** One tool call against a fresh server over a real socket. */
+function call(client, path) {
+  return client
+    .callTool({ name: "roblox_security_instruction", arguments: { path } })
+    .then(textOf);
+}
+
+/**
+ * The same call, answered in memory rather than over the wire.
+ *
+ * The point of every comparison against this is that the transport must not be
+ * able to change the answer.
+ */
+async function inMemoryAnswer(path) {
+  const server = createServer({ version: "0.0.0" });
+  const client = new Client({ name: "in-memory-client", version: "0.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+  try {
+    return await call(client, path);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+}
+
+/** POST a raw body to /mcp. */
+function postRaw(port, payload, path = "/mcp") {
+  return new Promise((resolve) => {
+    const req = httpRequest(
+      {
+        host: "127.0.0.1",
+        port,
+        path,
+        method: "POST",
+        headers: { "content-type": "application/json", "content-length": payload.length },
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () =>
+          resolve({
+            status: res.statusCode,
+            body: Buffer.concat(chunks).toString("utf8"),
+            error: null,
+          })
+        );
+      }
+    );
+
+    // A body past the size limit makes the server hang up mid-request, which is
+    // a refusal too. Report that rather than failing on the transport.
+    req.on("error", (error) => resolve({ status: null, body: "", error }));
+    req.end(payload);
+  });
+}
+
 const openServers = new Set();
 const openClients = new Set();
 
@@ -220,6 +287,155 @@ test("the HTTP transport serves the same single tool as stdio", async () => {
   const server = await startServer();
   const client = await connect(server.port);
 
+  const { tools } = await client.listTools();
+
+  assert.deepEqual(tools.map((tool) => tool.name), ["roblox_security_instruction"]);
+});
+
+test("a tool call over HTTP returns the file byte-identically", async () => {
+  const server = await startServer();
+  const client = await connect(server.port);
+
+  const path = "roblox/security/zero-trust-networking.md";
+  const overHttp = await call(client, path);
+
+  // \r? because a checkout on Windows serves CRLF, and the bytes are served as
+  // they are on disk.
+  assert.match(overHttp, /^---\r?\n/, "frontmatter is part of the served text");
+  assert.ok(overHttp.includes("name:"), "frontmatter is not stripped");
+
+  assert.equal(overHttp, await inMemoryAnswer(path), "the transport must not change the answer");
+});
+
+test("a tool call over HTTP needs no key", async () => {
+  delete process.env.API_KEY;
+
+  const server = await startServer();
+  const client = await connect(server.port);
+
+  const text = await call(client, "roblox/security/trust-boundaries.md");
+  assert.ok(text.length > 500, "the set is served without a key");
+});
+
+test("no tool accepts a write verb or a credential over HTTP either", async () => {
+  const server = await startServer();
+  const client = await connect(server.port);
+
+  const { tools } = await client.listTools();
+
+  for (const tool of tools) {
+    const properties = Object.keys(tool.inputSchema.properties ?? {});
+
+    for (const name of ["action", "verb", "operation", "command", "body", "content"]) {
+      assert.equal(properties.includes(name), false, `${tool.name} must not accept ${name}`);
+    }
+
+    for (const name of ["apiKey", "api_key", "token", "secret", "password"]) {
+      assert.equal(properties.includes(name), false, `${tool.name} must not accept ${name}`);
+    }
+  }
+});
+
+test("concurrent requests do not share state", async () => {
+  const server = await startServer();
+  const client = await connect(server.port);
+
+  // The transport is stateless: a fresh McpServer is built per request and
+  // closed with it. Hoisting one to module scope would leak per-connection state
+  // between unrelated callers, and this is the failure that would cause.
+  const [first, second] = await Promise.all([
+    call(client, "roblox/security/zero-trust-networking.md"),
+    call(client, "roblox/security/trust-boundaries.md"),
+  ]);
+
+  assert.notEqual(first, second, "each caller must get its own answer");
+
+  assert.equal(first, await inMemoryAnswer("roblox/security/zero-trust-networking.md"));
+  assert.equal(second, await inMemoryAnswer("roblox/security/trust-boundaries.md"));
+});
+
+test("a traversal attempt over the wire reports not found and leaks nothing", async () => {
+  const server = await startServer();
+  const client = await connect(server.port);
+
+  for (const path of [
+    "../../package.json",
+    "../../../.git/config",
+    "roblox/../../package.json",
+    "/etc/passwd",
+    "C:\\Windows\\System32\\drivers\\etc\\hosts",
+    // The decode step that only a real socket can reach. As a JSON string body
+    // this arrives literally, never URL-decoded, so it is refused as a miss
+    // inside the set - which is the correct answer either way. Assert the
+    // answer, not the mechanism.
+    "..%2f..%2fpackage.json",
+  ]) {
+    const text = await call(client, path);
+
+    assert.match(text, /^not found:/, `${path} must be refused over HTTP`);
+    assert.doesNotMatch(text, /"name":/, `${path} must leak nothing`);
+    assert.doesNotMatch(text, /\[core\]/, `${path} must leak nothing`);
+  }
+});
+
+test("an unknown route is refused", async () => {
+  const server = await startServer();
+
+  const { status, body } = await requestWithHost(server.port, "127.0.0.1", "/nope");
+
+  assert.equal(status, 404);
+  assert.match(body, /Not found: \/nope/, "the body names the path that was refused");
+});
+
+test("the process survives a bad request", async () => {
+  const server = await startServer();
+
+  const malformed = await postRaw(server.port, "{not json");
+  assert.equal(malformed.status, 400);
+
+  const wrongMethod = await requestWithHost(server.port, "127.0.0.1", "/mcp");
+  assert.equal(wrongMethod.status, 405);
+
+  const missingRoute = await requestWithHost(server.port, "127.0.0.1", "/nope");
+  assert.equal(missingRoute.status, 404);
+
+  assert.equal(server.child.exitCode, null, "the process must still be running");
+
+  const client = await connect(server.port);
+  const { tools } = await client.listTools();
+
+  assert.deepEqual(tools.map((tool) => tool.name), ["roblox_security_instruction"]);
+});
+
+test("a body over the limit is refused and the process survives", async () => {
+  const server = await startServer();
+
+  // readBody caps a body at 4 MiB, and an unauthenticated caller reaching an
+  // open listener is the one place here that can be made to consume unbounded
+  // memory. It is also the only guard in the HTTP path nothing asserts.
+  //
+  // The payload is deliberately valid JSON: without the size cap it would parse
+  // cleanly and come back as a 200 carrying a JSON-RPC error, so a 400 here can
+  // only have come from the cap. Sending malformed JSON instead would make the
+  // refusal indistinguishable from an ordinary parse error.
+  const oversized = Buffer.from(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "roblox_security_instruction", arguments: { path: "a".repeat(4 * 1024 * 1024) } },
+    }),
+    "utf8"
+  );
+
+  assert.ok(oversized.length > 4 * 1024 * 1024, "the payload has to exceed the cap");
+
+  const refused = await postRaw(server.port, oversized);
+
+  assert.equal(refused.status, 400, "an oversized body must be refused before it is parsed");
+  assert.equal(server.child.exitCode, null, "the process must still be running");
+
+  const client = await connect(server.port);
   const { tools } = await client.listTools();
 
   assert.deepEqual(tools.map((tool) => tool.name), ["roblox_security_instruction"]);
