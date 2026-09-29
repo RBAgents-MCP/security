@@ -19,6 +19,7 @@ Options
 Environment
   MCP_TRANSPORT    stdio (default) or http
   PORT             HTTP port, default 3000
+  HOST             HTTP bind host, default 0.0.0.0 (all interfaces)
 
 No tool in this server needs an API key.`;
 
@@ -35,6 +36,9 @@ if (command === "-v" || command === "--version") {
 
   const portFlag = rest.indexOf("--port");
   if (portFlag !== -1 && rest[portFlag + 1]) process.env.PORT = rest[portFlag + 1];
+
+  const hostFlag = rest.indexOf("--host");
+  if (hostFlag !== -1 && rest[hostFlag + 1]) process.env.HOST = rest[hostFlag + 1];
 
   await import("./index.js");
 } else if (command === "tools") {

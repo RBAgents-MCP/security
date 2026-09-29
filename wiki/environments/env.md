@@ -1,12 +1,13 @@
 # Environment Variables
 
-Two variables, both optional. The server starts with neither set and answers every
+Three variables, all optional. The server starts with none set and answers every
 request.
 
 | Variable | Default | Read by | Effect |
 |---|---|---|---|
 | `MCP_TRANSPORT` | `stdio` | `src/index.js` | `stdio` or `http` (`streamable-http` is accepted too). |
 | `PORT` | `3000` | `src/index.js` | The port the HTTP transport listens on. Ignored on stdio. |
+| `HOST` | `0.0.0.0` | `src/index.js` | The interface the HTTP transport binds. Ignored on stdio. |
 
 ## There is no `API_KEY`
 
@@ -31,12 +32,24 @@ npm run start:http
 # streamable HTTP on another port
 MCP_TRANSPORT=http PORT=8080 node src/index.js
 
+# streamable HTTP on loopback only
+MCP_TRANSPORT=http HOST=127.0.0.1 node src/index.js
+
 # the same, through the CLI
-rbagents-security serve --http --port 8080
+rbagents-security serve --http --port 8080 --host 127.0.0.1
 ```
 
-The CLI's `serve` command sets both variables from its flags, so `--http`, `--stdio`,
-and `--port` are equivalent to exporting them.
+The CLI's `serve` command sets these variables from its flags, so `--http`, `--stdio`,
+`--port`, and `--host` are equivalent to exporting them.
+
+## `HOST` is not a security control
+
+`HOST` decides which interface the listener opens. It does not decide who may reach it,
+and it is not authentication: a server bound to `0.0.0.0` inside a container is reachable
+from outside that container unless something in front of it stops the traffic.
+
+Binding to `127.0.0.1` is the right move when something proxies to this server, and it is
+the only thing it does.
 
 ## Related pages
 

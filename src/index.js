@@ -32,6 +32,12 @@ function rpcError(res, status, code, message) {
 }
 
 if (transportName === "http" || transportName === "streamable-http") {
+  // Explicit, though the default was already every interface. Node binds all
+  // interfaces when listen() is given no host; naming it makes the exposure a
+  // decision rather than a default nobody wrote down.
+  const host = process.env.HOST ?? "0.0.0.0";
+  const bind = host === "0.0.0.0" || host === "::" ? "all interfaces" : host;
+
   const httpServer = createHttpServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/healthz") {
       res.writeHead(200, { "content-type": "application/json" });
@@ -73,8 +79,8 @@ if (transportName === "http" || transportName === "streamable-http") {
     }
   });
 
-  httpServer.listen(port, () => {
-    process.stderr.write(`${SERVER_ID} ${version} serving over http on :${port}/mcp\n`);
+  httpServer.listen(port, host, () => {
+    process.stderr.write(`${SERVER_ID} ${version} serving over http on ${bind}:${port}/mcp\n`);
   });
 
   const shutdown = () => httpServer.close(() => process.exit(0));
