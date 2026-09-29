@@ -20,7 +20,7 @@ Hardening of the HTTP transport this repository already had, plus a container im
 | **Shutdown** | drain 500ms, then close what remains |
 | **`start:http`** | routed through `node src/cli.js serve --http`, so it runs under `cmd.exe` |
 | **`Dockerfile` / `.dockerignore`** | `node:22-alpine`, `src/` and `content/` only, non-root |
-| **Tests** | `test/http.test.js`, 19 tests over a real socket |
+| **Tests** | `test/http.test.js`, 16 tests over a real socket |
 
 ## What was decided, and what it closed
 
@@ -63,7 +63,7 @@ is far more than a real call needs.
 
 ## Test counts
 
-12 before, 28 after: the original 12 in `server.test.js` unchanged, 19 new in
+12 before, 28 after: the original 12 in `server.test.js` unchanged, 16 new in
 `http.test.js`. Baseline was confirmed by running it — the plan recorded it as "unknown,
 not run in this session" and expected 12.
 
