@@ -1,0 +1,49 @@
+# The build context is what `COPY` can reach. Everything here is either
+# installed inside the image instead, or belongs to how the set is authored and
+# checked rather than to what a client connects to.
+
+# Installed by `npm ci` in the image. Copying the host's tree in would carry a
+# Windows-native or otherwise mismatched install into a Linux image.
+node_modules
+
+# Version control, and the editor state that goes with it.
+.git
+.gitignore
+.github
+
+# This is why the image cannot run its own suite: `.dockerignore` excludes
+# test/ from the context, so `npm test` has nothing to run inside the
+# container. The suite is a gate on the repository, not on the artifact.
+test
+coverage
+
+# Documentation and the agent instruction set. None of it is served.
+wiki
+.agents
+AGENTS.md
+README.md
+
+# Local MCP server clones. Directory-shaped, so a stray clone in a working
+# checkout would bloat the context without being ignored.
+mcps
+
+# The build files themselves, and a compose file if one is ever added. Harmless
+# to list a file that does not exist yet.
+Dockerfile
+.dockerignore
+compose.yaml
+
+# Local machine state and secrets. `.env` is gitignored and must stay out of
+# the context for the same reason.
+.env
+.env.*
+*.log
+.DS_Store
+.idea
+.vscode
+
+# .gitattributes is deliberately NOT here. It is one line,
+# `* text=auto eol=lf`, and it is load-bearing for this build: a CRLF after any
+# instruction in this Dockerfile fails the build at line 2 with
+# `\r is not a valid separator`, and a CRLF-terminated .dockerignore does not
+# match the patterns it names. See wiki/environments/docker.md.
