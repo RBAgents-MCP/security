@@ -31,14 +31,65 @@ function rpcError(res, status, code, message) {
   res.end(JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id: null }));
 }
 
+/**
+ * The accepted `Host` header values, or `null` when the guard is off.
+ *
+ * Unset means skipped, not guessed at. A wrong list silently refusing every
+ * request is a worse failure than an absent one, so there is no default list
+ * to fall back to - the caller reports the absence on stderr instead, because
+ * silence is indistinguishable from a guard that is working.
+ */
+function allowedHosts() {
+  const configured = (process.env.MCP_ALLOWED_HOSTS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return configured.length > 0 ? configured : null;
+}
+
+/**
+ * The hostname in a `Host` header, with the port removed.
+ *
+ * Port-agnostic on purpose. A proxy, a load balancer, and a container port
+ * mapping each present a different port for the same server, so an allow-list
+ * that matched on the whole header would break the moment the one in front of
+ * it changed. Bracketed IPv6 keeps its brackets, since `[::1]` is the form the
+ * header actually carries.
+ */
+function hostName(hostHeader) {
+  const value = hostHeader.trim();
+
+  const bracket = value.lastIndexOf("]");
+  if (bracket !== -1) return value.slice(0, bracket + 1);
+
+  const colon = value.lastIndexOf(":");
+  return colon === -1 ? value : value.slice(0, colon);
+}
+
 if (transportName === "http" || transportName === "streamable-http") {
   // Explicit, though the default was already every interface. Node binds all
   // interfaces when listen() is given no host; naming it makes the exposure a
   // decision rather than a default nobody wrote down.
   const host = process.env.HOST ?? "0.0.0.0";
   const bind = host === "0.0.0.0" || host === "::" ? "all interfaces" : host;
+  const hosts = allowedHosts();
 
   const httpServer = createHttpServer(async (req, res) => {
+    // DNS-rebinding protection. A browser on a page the user is visiting can be
+    // pointed at a loopback or container address, and neither this server nor
+    // anything in front of it asks who is asking. The Host header is the only
+    // thing tying the request to a deployment the operator chose, so when the
+    // operator names one, honour it. A request with no Host header at all is
+    // refused rather than waved through.
+    if (hosts !== null) {
+      const requestHost = req.headers.host;
+      if (requestHost === undefined || !hosts.includes(hostName(requestHost))) {
+        rpcError(res, 403, -32000, `Host not allowed: ${requestHost ?? "(none)"}`);
+        return;
+      }
+    }
+
     if (req.method === "GET" && req.url === "/healthz") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ status: "ok", server: SERVER_ID, version }));
@@ -80,7 +131,14 @@ if (transportName === "http" || transportName === "streamable-http") {
   });
 
   httpServer.listen(port, host, () => {
-    process.stderr.write(`${SERVER_ID} ${version} serving over http on ${bind}:${port}/mcp\n`);
+    const allowList =
+      hosts === null
+        ? "Host allow-list is off - MCP_ALLOWED_HOSTS is unset"
+        : `Host allow-list is ${hosts.join(", ")}`;
+
+    process.stderr.write(
+      `${SERVER_ID} ${version} serving over http on ${bind}:${port}/mcp - ${allowList}\n`
+    );
   });
 
   const shutdown = () => httpServer.close(() => process.exit(0));
