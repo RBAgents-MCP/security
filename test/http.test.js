@@ -138,8 +138,15 @@ const openClients = new Set();
 
 after(async () => {
   // A client holds its connection for the life of the session, so a client
-  // left open keeps the event loop alive and this file never exits.
-  for (const client of openClients) await client.close().catch(() => {});
+  // left open keeps the event loop alive and this file never exits. The race
+  // covers a client whose server has already been killed, where close() hangs
+  // on a socket nobody will ever answer.
+  for (const client of openClients) {
+    await Promise.race([
+      client.close().catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 2_000)),
+    ]);
+  }
 
   for (const child of openServers) child.kill();
 });
@@ -216,4 +223,33 @@ test("the HTTP transport serves the same single tool as stdio", async () => {
   const { tools } = await client.listTools();
 
   assert.deepEqual(tools.map((tool) => tool.name), ["roblox_security_instruction"]);
+});
+
+test("the process exits on SIGTERM, draining first", async () => {
+  const server = await startServer();
+
+  // A client that has made a request and is now idle still holds its keep-alive
+  // connection open. That is the case server.close() alone waits on forever.
+  const client = await connect(server.port);
+  await client.listTools();
+
+  server.child.kill("SIGTERM");
+
+  const { code, signal } = await new Promise((resolve) => {
+    server.child.on("exit", (exitCode, exitSignal) => resolve({ code: exitCode, signal: exitSignal }));
+  });
+
+  assert.notEqual(code, 1, `the server failed on SIGTERM (${code ?? signal})`);
+
+  // Windows has no signals. Node emulates them by terminating the target
+  // unconditionally, so a handler registered here never runs and there is no
+  // drain to observe - only the fact that the process stopped.
+  if (process.platform !== "win32") {
+    assert.equal(code, 0, "a signalled server should exit cleanly, not fail");
+    assert.match(
+      server.output.stderr,
+      /draining for 500ms before closing/,
+      "shutdown should drain before it closes"
+    );
+  }
 });
