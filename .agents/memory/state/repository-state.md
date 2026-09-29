@@ -52,6 +52,12 @@ framework.
   covers all of it over a real socket against the real process - see
   [`../tasks/http-transport-and-docker.md`](../tasks/http-transport-and-docker.md) and
   [`../tasks/express-cluster-migration.md`](../tasks/express-cluster-migration.md).
+* **`node:cluster` workers on one port.** `MCP_CLUSTER_WORKERS` sets the primary's
+  count — `os.availableParallelism()` by default — and every worker binds the same
+  `PORT` through the cluster's shared handle. `1` forks nothing, which is what makes
+  the change bisectable. The primary binds nothing and relays signals; a worker whose
+  primary is gone exits on `disconnect`. stdio never forks, because stdout is the
+  JSON-RPC channel there.
 * **A container image.** `Dockerfile` and `.dockerignore`, `node:22-alpine`, `src/` and
   `content/` only, non-root. **Written and reviewed as source; never built or run.**
 * **Instruction system.** Mode B - `AGENTS.md` plus `.agents/`, resolving the shared set
@@ -63,9 +69,10 @@ framework.
 
 ## Test counts
 
-**37 total: 13 in `server.test.js`, 24 in `http.test.js`.** Before the express
-migration it was 29 — 13 and 16 — and before the per-file change it was 29 as well —
-12 and 16. See [`../tasks/per-file-tools.md`](../tasks/per-file-tools.md) and
+**45 total: 13 in `server.test.js`, 32 in `http.test.js`.** Before the cluster change it
+was 37 — 13 and 24 — and before the express migration it was 29 — 13 and 16. Before the
+per-file change it was 29 as well — 12 and 16. See
+[`../tasks/per-file-tools.md`](../tasks/per-file-tools.md) and
 [`../tasks/express-cluster-migration.md`](../tasks/express-cluster-migration.md).
 
 ## What is not built
@@ -87,6 +94,13 @@ migration it was 29 — 13 and 16 — and before the per-file change it was 29 a
   [`../tasks/per-file-tools.md`](../tasks/per-file-tools.md).
 * `package-lock.json` still carries the template's root `name` and `bin` on `master`, so
   any `npm install` rewrites four lines. Pre-existing; reverted rather than committed.
+* **A worker's RSS grows with request count and was not diagnosed.** Measured on the
+  `node:http` baseline at 90 MB idle → 241 MB after 3000 `tools/list` calls, and on the
+  express build at 97 MB → 258 MB: the same shape, so it is a property of building a
+  fresh `McpServer` per request and not of express or of the cluster. RSS is not a leak
+  test — V8 grows its heap and collects lazily — so this is **reported, not diagnosed**
+  and no test asserts it. **Reported, not fixed**; see
+  [`../tasks/express-cluster-migration.md`](../tasks/express-cluster-migration.md).
 
 ## Shared set
 

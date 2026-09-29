@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { BODY_LIMIT_BYTES } from "../src/app.js";
 import { SERVER_ID, createServer } from "../src/server.js";
@@ -68,6 +69,11 @@ function waitForOutput(child, output, pattern, timeout = 15_000) {
  * Both stdout and stderr are captured, because which stream a message arrives
  * on is itself under test: on this transport stdout is not a channel, and a
  * server that logged there would be a bug that only shows up under stdio.
+ *
+ * The capture also spans the whole process tree, not just the process spawned
+ * here. With `MCP_CLUSTER_WORKERS` above one, the child is a primary that
+ * serves nothing and forks workers, and the workers inherit its stdout and
+ * stderr - which is why a worker's startup line is visible here at all.
  */
 async function startServer(env = {}) {
   const port = await freePort();
@@ -96,7 +102,80 @@ async function startServer(env = {}) {
 
   await waitForOutput(child, output, /serving over http/);
 
-  return { child, port, output };
+  /**
+   * How many times `needle` has appeared so far.
+   *
+   * Not a boolean: with `MCP_CLUSTER_WORKERS=2` the startup line is printed once
+   * per worker, and "the line appeared" cannot tell one worker from two. Counting
+   * it is how this suite observes that a fork happened, without adding a pid to a
+   * startup line that other tests pin as text.
+   */
+  const countOutput = (needle) => (output.stdout + output.stderr).split(needle).length - 1;
+
+  /** Resolve true once `needle` has appeared `n` times, false if the deadline passes. */
+  const waitForCount = (needle, n, timeout = 15_000) => {
+    const deadline = Date.now() + timeout;
+
+    return new Promise((resolve) => {
+      const poll = () => {
+        if (countOutput(needle) >= n) return resolve(true);
+        if (Date.now() > deadline) return resolve(false);
+        return setTimeout(poll, 25);
+      };
+
+      poll();
+    });
+  };
+
+  /**
+   * Resolve true once `needle` has appeared on stderr, false if the deadline passes.
+   *
+   * Separate from `waitForCount` because the primary's own lines are the ones worth
+   * waiting for by name: a worker's startup line tells you a worker started, but
+   * only the primary says which pid it lost.
+   */
+  const waitForStderr = (needle, timeout = 15_000) => {
+    const deadline = Date.now() + timeout;
+
+    return new Promise((resolve) => {
+      const poll = () => {
+        if (output.stderr.includes(needle)) return resolve(true);
+        if (child.exitCode !== null) return resolve(false);
+        if (Date.now() > deadline) return resolve(false);
+        return setTimeout(poll, 25);
+      };
+
+      poll();
+    });
+  };
+
+  return {
+    child,
+    port,
+    output,
+    url: `http://127.0.0.1:${port}`,
+    countOutput,
+    waitForCount,
+    waitForStderr,
+  };
+}
+
+/**
+ * Start a server, hand it to `run`, and stop it afterwards whether or not
+ * `run` throws.
+ *
+ * SIGKILL rather than the default SIGTERM, and the reason is the cluster: a
+ * primary killed with a signal relays it to its workers and waits for them,
+ * which is the behaviour under test elsewhere and merely slow here. A test that
+ * fails should not also leave a drain running.
+ */
+async function withServer(env, run) {
+  const server = await startServer(env);
+  try {
+    return await run(server);
+  } finally {
+    server.child.kill("SIGKILL");
+  }
 }
 
 /**
@@ -726,3 +805,301 @@ test("the process exits on SIGTERM, draining first", async () => {
     );
   }
 });
+
+/* -------------------------------------------------------------------------- *
+ * The workers.
+ *
+ * Every one of these starts the real entry point as a real primary and talks to
+ * it over the wire, because the thing under test is a property of *processes* -
+ * that two of them can hold one port, that killing one leaves the others
+ * listening to nothing - and none of it is observable from inside a single
+ * process.
+ * -------------------------------------------------------------------------- */
+
+test("MCP_CLUSTER_WORKERS=1 forks nothing and serves on its own", async () => {
+  await withServer({ MCP_CLUSTER_WORKERS: "1" }, async ({ output, countOutput, port }) => {
+    assert.match(output.stderr, /MCP_CLUSTER_WORKERS is 1, so no worker is forked/);
+    assert.doesNotMatch(output.stderr, /forking \d+ HTTP workers/);
+    assert.equal(countOutput("serving over http"), 1, "one process, one startup line");
+
+    // Still a working server: disabling the fork must not disable the transport.
+    const client = await connect(port);
+    const { tools } = await client.listTools();
+
+    assert.deepEqual(
+      tools.map((tool) => tool.name).sort(),
+      ["roblox_security_index", "trust_boundaries", "zero_trust_networking"]
+    );
+  });
+});
+
+test("MCP_CLUSTER_WORKERS=2 binds the port from two separate workers", async () => {
+  await withServer(
+    { MCP_CLUSTER_WORKERS: "2" },
+    async ({ output, countOutput, waitForCount, url }) => {
+      assert.match(output.stderr, /forking 2 HTTP workers on 127\.0\.0\.1:\d+\/mcp/);
+
+      // Two startup lines means two processes each bound the port - which only
+      // happens through the cluster's shared handle, because two independent
+      // `listen` calls on one port would be EADDRINUSE. This is the assertion
+      // that the fork is real.
+      assert.ok(
+        await waitForCount("serving over http", 2),
+        `expected two workers to bind, saw ${countOutput("serving over http")}\n${output.stderr}`
+      );
+
+      // And both are answering: enough concurrent requests to outlast a
+      // single-process accept loop, each on its own connection.
+      const responses = await Promise.all(
+        Array.from({ length: 8 }, () => fetch(`${url}/healthz`))
+      );
+      for (const response of responses) {
+        assert.equal(response.status, 200);
+        assert.equal((await response.json()).server, SERVER_ID);
+      }
+    }
+  );
+});
+
+test("concurrent tool calls stay isolated when they cross a process boundary", async () => {
+  // The property `cluster` can plausibly break. Each request builds its own
+  // McpServer in whichever worker wins the connection, so three callers asking
+  // for three different files must each get their own - and the workers are
+  // separate processes, so anything cached at module scope has to hold in two
+  // of them to pass.
+  await withServer({ MCP_CLUSTER_WORKERS: "2" }, async ({ waitForCount, port }) => {
+    assert.ok(await waitForCount("serving over http", 2), "the fork did not happen");
+
+    const names = ["roblox_security_index", "trust_boundaries", "zero_trust_networking"];
+    const clients = await Promise.all(names.map(() => connect(port)));
+
+    try {
+      const results = await Promise.all(
+        clients.map((client, i) => client.callTool({ name: names[i], arguments: {} }))
+      );
+
+      const texts = results.map(textOf);
+      for (const [i, text] of texts.entries()) {
+        assert.ok(text.length > 500, `${names[i]} came back empty`);
+        // Byte-identical to the in-memory answer for the same tool. That is a
+        // stronger claim than "the right file came back": anything a worker did
+        // to the answer on its way through a second process - a cache, a shared
+        // module, a torn read - moves these bytes.
+        assert.equal(text, await inMemoryAnswer(names[i]), `${names[i]} was answered with the wrong file`);
+      }
+
+      assert.equal(new Set(texts).size, names.length, "each caller got its own answer");
+    } finally {
+      await Promise.all(clients.map((client) => client.close()));
+    }
+  });
+});
+
+test(
+  "no worker outlives a primary that was killed outright",
+  // The failure this catches does not show up in this run. A worker whose primary
+  // is gone keeps the port and keeps answering, so the suite passes, and then the
+  // *next* run fails on EADDRINUSE against a process nobody remembers starting.
+  // `after()` kills the primary with a signal on every failing run, so without
+  // the `disconnect` handler this file would leak two processes per failed run.
+  { skip: process.platform === "win32" ? "no signal delivery on Windows" : false },
+  async () => {
+    const server = await startServer({ MCP_CLUSTER_WORKERS: "2" });
+
+    try {
+      assert.ok(await server.waitForCount("serving over http", 2), "the fork did not happen");
+
+      const exited = new Promise((resolve) => server.child.once("exit", resolve));
+
+      // SIGKILL cannot be caught, handled, or forwarded. The primary leaves
+      // instantly and the workers are told only through the IPC channel that
+      // closes with it.
+      server.child.kill("SIGKILL");
+      await exited;
+
+      // A worker takes a moment to notice the disconnect and exit. The generous
+      // window is the point: a check that ran immediately would pass even when
+      // the handler is missing, because the orphan has not finished dying yet.
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      // The proof, in two parts. The port stops answering...
+      await assert.rejects(
+        fetch(`${server.url}/healthz`),
+        `the port is still served after the primary died - port ${server.port} has an orphan`
+      );
+
+      // ...and it is genuinely free, which a request that merely timed out would
+      // not show: something else can bind it again.
+      const rebound = createNetServer();
+      try {
+        await new Promise((resolve, reject) => {
+          rebound.on("error", reject);
+          rebound.listen(server.port, "127.0.0.1", resolve);
+        });
+      } finally {
+        await new Promise((resolve) => rebound.close(resolve));
+      }
+    } finally {
+      server.child.kill("SIGKILL");
+    }
+  }
+);
+
+test(
+  "the cluster drains on SIGINT and exits 0",
+  { skip: process.platform === "win32" ? "no signal delivery on Windows" : false },
+  async () => {
+    const server = await startServer({ MCP_CLUSTER_WORKERS: "2" });
+
+    try {
+      assert.ok(await server.waitForCount("serving over http", 2), "the fork did not happen");
+
+      const exited = new Promise((resolve) =>
+        server.child.once("exit", (code, signal) => resolve({ code, signal }))
+      );
+      server.child.kill("SIGINT");
+      const { code, signal } = await exited;
+
+      assert.equal(code, 0, `the primary did not exit cleanly: signal ${signal}`);
+
+      // The primary says it is draining its workers, and each worker says it is
+      // draining itself. Both lines, because the primary relays the signal rather
+      // than killing its workers outright - a worker killed mid-request would drop
+      // a response the client is still reading.
+      assert.match(server.output.stderr, /SIGINT, draining 2 worker\(s\)/);
+      assert.equal(
+        server.countOutput("draining for 500ms before closing"),
+        2,
+        "both workers should report their own drain"
+      );
+
+      // And the port is genuinely closed once the primary is gone, which is the
+      // ordering the wait-for-the-last-worker exists to guarantee.
+      await assert.rejects(
+        fetch(`${server.url}/healthz`),
+        "the port is still served after the primary exited"
+      );
+    } finally {
+      server.child.kill("SIGKILL");
+    }
+  }
+);
+
+test(
+  "a second signal stops the wait rather than queueing behind the first",
+  { skip: process.platform === "win32" ? "no signal delivery on Windows" : false },
+  async () => {
+    await withServer({ MCP_CLUSTER_WORKERS: "2" }, async ({ child, output, waitForCount }) => {
+      assert.ok(await waitForCount("serving over http", 2), "the fork did not happen");
+
+      const exited = new Promise((resolve) => child.once("exit", (code) => resolve(code)));
+
+      child.kill("SIGINT");
+      child.kill("SIGINT");
+
+      const code = await exited;
+      assert.equal(code, 0);
+
+      // What is asserted is the *observable* half of the early-exit path: the
+      // primary's drain line is written once. A second signal that fell through to
+      // the full drain would print it again, and the guarded flag in `startPrimary`
+      // is what stops that. The suite cannot force a worker to be slow enough to
+      // make the second signal land mid-drain, so the timing the branch exists for
+      // - an operator who has stopped waiting - is not exercised here.
+      assert.equal(output.stderr.split("SIGINT, draining ").length - 1, 1);
+    });
+  }
+);
+
+test("stdio forks nothing, because a worker's stdout would corrupt the stream", async () => {
+  // Not observable through `startServer`, which waits for an HTTP startup line
+  // that stdio never prints. Driven through the SDK's own stdio client instead,
+  // so this is the real entry point over a real pipe - the assertion is that the
+  // tool list comes back intact, not that a log happens to be quiet.
+  const client = new Client({ name: "stdio-cluster-test", version: "0.0.0" });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [ENTRY],
+    cwd: ROOT,
+    env: { ...process.env, MCP_TRANSPORT: "stdio" },
+    stderr: "pipe",
+  });
+
+  let stderr = "";
+  transport.stderr?.on("data", (chunk) => {
+    stderr += chunk;
+  });
+
+  try {
+    await client.connect(transport);
+
+    const { tools } = await client.listTools();
+    assert.equal(tools.length, 3, "one tool per file in the set");
+    assert.ok(textOf(await client.callTool({ name: "trust_boundaries", arguments: {} })).length > 0);
+
+    // The fork is the thing being ruled out, so it is asserted rather than
+    // assumed. The handshake above already implies it - a forked worker writing
+    // its startup line to the inherited stdout would have corrupted the stream
+    // before the initialize response arrived.
+    assert.match(stderr, /serving over stdio/);
+    assert.doesNotMatch(stderr, /forking \d+ HTTP workers/);
+  } finally {
+    await client.close();
+  }
+});
+
+test(
+  "a worker that dies is replaced, and the server keeps serving",
+  // The suite knows the primary's pid - it spawned it - but not its workers' pids:
+  // the startup line is pinned by other tests and adding a pid to it, or to the
+  // health check, would change a surface this task was not asked to change. So the
+  // pids are read from the kernel instead, which is the one source that knows them
+  // and is Linux only. Elsewhere this stays unchecked rather than being asserted
+  // by a weaker proxy.
+  { skip: process.platform === "linux" ? false : "worker pids are read from /proc" },
+  async () => {
+    const { readFile } = await import("node:fs/promises");
+
+    /**
+     * The direct children of `pid`, from `/proc`.
+     *
+     * `children` lives under the thread directory rather than the process one,
+     * which is the shape the kernel has and the shape every tool on Linux expects.
+     */
+    const childrenOf = async (pid) => {
+      const listed = await readFile(`/proc/${pid}/task/${pid}/children`, "utf8");
+      return listed.split(/\s+/).filter(Boolean).map(Number);
+    };
+
+    await withServer(
+      { MCP_CLUSTER_WORKERS: "2" },
+      async ({ child, output, waitForCount, waitForStderr, url }) => {
+        assert.ok(await waitForCount("serving over http", 2), "the fork did not happen");
+
+        const workers = await childrenOf(child.pid);
+        assert.equal(workers.length, 2, `expected two workers, found ${workers.join(", ")}`);
+
+        // `process.kill`, not `child.kill`: the latter takes a signal and nothing
+        // else, so passing a pid as a second argument silently kills the *primary*
+        // instead - which looks like a server that ignores its workers dying.
+        process.kill(workers[0], "SIGKILL");
+
+        // The replacement is a new pid, not the old one coming back, and the
+        // primary says so out loud rather than silently refilling the pool.
+        assert.ok(
+          await waitForStderr(`worker ${workers[0]} exited`),
+          `the primary did not report the death\n${output.stderr}`
+        );
+        assert.ok(await waitForCount("serving over http", 3), "the replacement did not bind");
+
+        const after = await childrenOf(child.pid);
+        assert.equal(after.length, 2, "the pool is back to two");
+        assert.ok(!after.includes(workers[0]), "a dead pid is not back");
+        assert.ok(after.includes(workers[1]), "the surviving worker was left alone");
+
+        // And the server is still answering, on the pool it has now.
+        assert.equal((await fetch(`${url}/healthz`)).status, 200);
+      }
+    );
+  }
+);

@@ -65,6 +65,14 @@ Transport selection here is an **environment variable**, not a second entry poin
 the same `MCP_TRANSPORT` documented in [`env.md`](env.md). There is no separate HTTP
 image; the two forms share every byte of payload and differ by one variable.
 
+**One worker per CPU.** On HTTP the server forks `os.availableParallelism()` workers and
+every one of them binds port 3000 through the cluster's shared handle, so `-p 3000:3000`
+publishes all of them at once and nothing else is needed. The `serving over http` line is
+printed once per worker, so **its repeat count in the log is the number of workers
+actually listening** — a single line means the container has one CPU, or that
+`MCP_CLUSTER_WORKERS=1` was set. The latter is what you want when a memory limit, rather
+than a CPU limit, is the constraint.
+
 ## The Host allow-list in a container
 
 A container binds every interface, which is exactly the deployment where
@@ -128,6 +136,6 @@ opinion frozen into the repository for every consumer. Write your own.
 
 ## Related pages
 
-* [`env.md`](env.md) — every environment variable this project reads.
+* [`env.md`](env.md) — every environment variable this project reads, including `MCP_CLUSTER_WORKERS`.
 * [`setup.md`](setup.md) — running it from a checkout.
 * [`../information/architecture.md`](../information/architecture.md) — how the pieces fit.

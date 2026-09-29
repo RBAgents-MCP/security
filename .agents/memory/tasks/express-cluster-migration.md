@@ -21,6 +21,9 @@ the work merges. Where the two disagree, this record wins.
 
 ## What this is
 
+**Written before any of the work, and kept as the before-picture.** For the state after
+each task see [`../state/repository-state.md`](../state/repository-state.md).
+
 The repository serves `StreamableHTTPServerTransport` on `POST /mcp` from a
 `node:http` server, with a hand-rolled `readBody` and a hand-rolled `rpcError`. It is
 the **only one of the five** whose `Host` guard is not the SDK's `hostHeaderValidation`:
@@ -93,7 +96,7 @@ and the release log.
 |---|---|---|---|
 | Baseline, before any change | 29 | 29 | 0 |
 | After task 2 — express | 37 | 37 | 0 |
-| After task 3 — cluster | 37 | 37 | 0 |
+| After task 3 — cluster | 45 | 45 | 0 |
 
 ---
 
@@ -157,3 +160,67 @@ asserted in the form it was given.
 - **The Docker image was not built.** `Dockerfile` is untouched and still has never
   been built, so `npm ci` inside it remains unproven even though `npm ci` succeeds on
   the host.
+
+---
+
+### Task 3 — `feat/cluster-workers`
+
+A `node:cluster` primary forking workers onto the one `PORT`.
+
+**45 tests, 45 pass, 0 fail** (from 37). Eight new.
+
+| What | Notes |
+|---|---|
+| `src/index.js` | `startPrimary()` and `startWorker()`. The primary forks and binds nothing; each worker runs the same `createApp().listen(port, host, …)` as before, so the shared handle and the round-robin scheduler do the distribution. |
+| `workerCount()` | `MCP_CLUSTER_WORKERS` when it parses to an integer `>= 1`, otherwise `Math.max(1, availableParallelism())`. It returns the **source** as well, because the no-fork startup line names it and naming the variable when the number came from the CPU count would describe a variable nobody set. |
+| `disconnect` | A worker exits `0` when its primary is gone. `SIGKILL` cannot be caught or forwarded, so the IPC channel closing is the only signal there is. |
+| The drain window | Unchanged: 500 ms, `draining for 500ms before closing`, with the measured reasoning intact. A cluster changes how many requests are in flight, not how long one takes. |
+| The primary's own line | `${SERVER_ID} ${version} SIGTERM, draining 2 worker(s)`. Distinct from the worker's line on purpose — the primary holds no listener, so it has no 500 ms window of its own to announce. |
+| `cli.js --help` | `MCP_CLUSTER_WORKERS` added. `MCP_ALLOWED_HOSTS` is still missing from that block; it was missing before this task and adding it was not in scope. Reported below. |
+
+#### The `/proc` worker-pid test
+
+It works here, Linux-only with an explicit skip elsewhere, exactly as in the reference.
+It reads `/proc/<pid>/task/<pid>/children` because the suite knows the primary's pid —
+it spawned it — but not its workers', and the startup line is pinned as text by other
+tests. Killing a worker with `child.kill(pid, …)` would silently kill the *primary*
+instead, so it is `process.kill(workers[0], "SIGKILL")`.
+
+#### The one test that could not be written here
+
+**The port-occupier test does not work in this environment, and was not written.** The
+intent is to hold the port in a parent and prove what a worker does when its bind fails.
+It cannot be done here: a child process binds a port its parent already holds,
+successfully, while the parent keeps serving. A test written that way would pass for the
+wrong reason, so the failure it was meant to catch — what a worker does when it cannot
+bind, and what the primary does about it — is **uncovered**. The primary's restart
+counter and its give-up line (`a worker exited … N times, not restarting it`, then
+`exit 1`) are therefore **untested**. Closing this needs a mechanism this environment
+does not have, not more effort on the same idea.
+
+#### Memory across many requests: measured, and not what the plan expected
+
+`verification.md` asks that a worker not grow in memory across many requests. It does
+grow, and it grew the same way before either commit:
+
+| Build | Idle | 500 | 1000 | 2000 | 3000 |
+|---|---|---|---|---|---|
+| `node:http` baseline (`b5d5f6b`) | 90 MB | 117 MB | 183 MB | 205 MB | 241 MB |
+| express + cluster | 98 MB | 122 MB | 188 MB | 210 MB | 258 MB |
+
+The same shape on both, so it is a property of building a fresh `McpServer` per
+request — the statelessness the plan requires — and not of express, and not of the
+cluster. RSS is not a leak test: V8 grows its heap and collects lazily, and this
+measurement has no forced collection in it. So this is **reported, not diagnosed**, no
+test asserts it, and the verification item is recorded as **not met** rather than ticked.
+Diagnosing it would mean a heap profile, which is a different piece of work and is not
+this task's.
+
+#### For the owner
+
+- `MCP_CLUSTER_WORKERS=0` falls back to the CPU count rather than meaning "no workers".
+  That follows the plan's `>= 1`; the reference implementation used `>= 0`, where `0`
+  would have meant no fork. Both are defensible and they differ only at `0`, which is
+  the one value nobody sets on purpose.
+- `src/cli.js --help` lists every environment variable **except** `MCP_ALLOWED_HOSTS`.
+  That gap predates this task and was not in scope to close; it is a one-line fix.

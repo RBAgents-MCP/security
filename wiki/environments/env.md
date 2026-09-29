@@ -1,6 +1,6 @@
 # Environment Variables
 
-Four variables, all optional. The server starts with none set and answers every
+Five variables, all optional. The server starts with none set and answers every
 request.
 
 | Variable | Default | Read by | Effect |
@@ -9,6 +9,7 @@ request.
 | `PORT` | `3000` | `src/index.js` | The port the HTTP transport listens on. Ignored on stdio. |
 | `HOST` | `0.0.0.0` | `src/index.js` | The interface the HTTP transport binds. Ignored on stdio. |
 | `MCP_ALLOWED_HOSTS` | unset | `src/app.js` | Comma-separated `Host` header allow-list. **Unset means the guard is off.** HTTP only. |
+| `MCP_CLUSTER_WORKERS` | the CPU count | `src/index.js` | How many HTTP workers to fork. **`1` forks nothing.** HTTP only; stdio never forks. |
 
 ## There is no `API_KEY`
 
@@ -124,6 +125,39 @@ whatever the cause. Only the message distinguishes them.
 an allow-list, an in-container health check must be allowed too.** A `HEALTHCHECK` hitting
 `http://localhost:3000/healthz` sends `Host: localhost:3000`, so include `localhost` in the
 list or the container reports itself unhealthy while serving correctly.
+
+## `MCP_CLUSTER_WORKERS`
+
+How many HTTP workers the primary forks. Each worker binds the same `PORT`; the
+kernel's shared listening handle and the round-robin scheduler distribute the
+connections.
+
+Unset, the count is `os.availableParallelism()` — the CPUs this process was actually
+given, not a constant, so a two-CPU container gets two workers and a laptop does not get
+eight.
+
+```bash
+# one worker per CPU (the default)
+npm run start:http
+
+# no fork at all: one process, one listener, the pre-cluster behaviour
+MCP_CLUSTER_WORKERS=1 npm run start:http
+
+# four workers on a machine that reports two CPUs
+MCP_CLUSTER_WORKERS=4 npm run start:http
+```
+
+**`1` disables forking**, and that is the point of it rather than a special case: the
+same code answers with and without workers, so a difference between the two is a
+difference in the fork rather than in the transport. A value of `0`, or anything that
+is not a positive integer, is not a worker count at all — it falls back to the CPU
+count, like leaving the variable unset.
+
+The primary forks workers and serves nothing itself, so the `serving over http` line is
+printed once per worker — **the number of lines in the log is the number of open
+ports**. The primary also replaces a worker that dies, and gives up rather than
+respawning into a crash loop nobody is watching. There is no CLI flag for it, for the
+same reason `HOST` has none: one transport, one reason to want a different value.
 
 ## Related pages
 
