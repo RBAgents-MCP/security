@@ -21,6 +21,8 @@ runs it directly.
 ```
 AGENTS.md                     entry point, connector bootstrap, trigger table
 package.json                  both bins, no build step
+Dockerfile                    node:22-alpine, src/ and content/ only; written, never built
+.dockerignore                 the build context; excludes test/, so the image cannot run its own suite
 content/                      the published set - the product
   index/                      the routing index
 src/
@@ -32,7 +34,8 @@ src/
   tools/
     the Roblox security set.js the only tool: read one file from the set by path
 test/
-  server.test.js              registration, schema, every file, traversal, surface parity
+  server.test.js              registration, schema, every file, traversal, surface parity - in memory
+  http.test.js                the same guarantees over a real socket; starts the real process
 wiki/                         human documentation
 .agents/                      this set - rules, agent wiki, memory, indexes
 ```
@@ -45,8 +48,9 @@ wiki/                         human documentation
 | `npm test` | `node --test`. The whole suite; there is no watch mode. |
 | `npm run cli -- tools` | Lists registered tools through the CLI surface. |
 | `npm start` | Serves over stdio. |
-| `npm run start:http` | Serves over streamable HTTP on `PORT` (default 3000). |
+| `npm run start:http` | Serves over streamable HTTP on `PORT` (default 3000). Equivalent to `node src/cli.js serve --http`, which is what makes it portable - `VAR=value cmd` is a shell feature and fails under `cmd.exe`. |
 | `npm run inspect` | MCP Inspector against the stdio server. |
+| `docker build -t <tag> .` | Builds the image. **Never run by this repository's own workflow**; the Dockerfile is written and reviewed as source only. |
 
 ## Environment variables
 
@@ -54,6 +58,8 @@ wiki/                         human documentation
 |---|---|---|
 | `MCP_TRANSPORT` | `src/index.js` | `stdio` (default) or `http`. |
 | `PORT` | `src/index.js` | HTTP port, default `3000`. |
+| `HOST` | `src/index.js` | HTTP bind host, default `0.0.0.0` (all interfaces). |
+| `MCP_ALLOWED_HOSTS` | `src/index.js` | Comma-separated `Host` allow-list. **Unset means off** - no list, every host accepted, and the startup line on stderr says so. |
 
 There is no `API_KEY`. Nothing here reaches an external service.
 
@@ -68,7 +74,15 @@ suite.
 ## Gotchas
 
 * **stdout is the protocol.** On stdio, a `console.log` anywhere on the server path
-  corrupts the JSON-RPC stream. Log to stderr. Only CLI commands print.
+  corrupts the JSON-RPC stream. Log to stderr. Only CLI commands print. This holds on
+  the **HTTP** branch too - it is one process serving both, so the HTTP startup line
+  goes to stderr as well and `test/http.test.js` asserts stdout stays empty.
+* **An unset `MCP_ALLOWED_HOSTS` is a decision, not an omission.** The safe-looking
+  empty value is the unsafe one: unset installs no allow-list and accepts every `Host`.
+  The startup line exists so that state is visible rather than inferred from silence.
+* **`.gitattributes` is load-bearing for the Dockerfile.** `* text=auto eol=lf` - a CRLF
+  after any Dockerfile instruction fails the build at line 2, and a CRLF `.dockerignore`
+  silently stops matching. Do not delete it; do not let an editor reintroduce CRLF.
 * **Tool schemas are raw shapes.** `server.tool()` wants `{ a: z.number() }`, not
   `z.object({ ... })`. Wrapping it silently produces a tool with no parameters.
 * **Reject `..` before the filesystem call.** A check that runs after `fs` is checking a

@@ -113,4 +113,6 @@ list or the container reports itself unhealthy while serving correctly.
 ## Related pages
 
 * [`setup.md`](setup.md) — installing and running both modes.
+* [`docker.md`](docker.md) — running the server as a container image, where an unset
+  allow-list matters most.
 * [`../information/overview.md`](../information/overview.md) — what the project is.

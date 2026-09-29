@@ -39,11 +39,24 @@ if the first is ever weakened, the boundary still holds.
 * An MCP server over **stdio** and **streamable HTTP**, with a `/healthz` endpoint on the
   HTTP transport.
 * A CLI with `help`, `version`, `tools`, and `serve`.
+* A container image — the same `src/` and `content/` on a pinned Node runtime, running as
+  a non-root user. See [`../environments/docker.md`](../environments/docker.md).
 * A tool layer where each tool is its own file under `src/tools/`, declaring optional
   parameters with [zod](https://zod.dev).
-* A test suite covering registration, the advertised schema, every file in the set, five
-  traversal attempts that must report `not found` and leak nothing, and the structural
-  claim that no tool takes a verb or a credential.
+* A test suite covering registration, the advertised schema, every file in the set, the
+  structural claim that no tool takes a verb or a credential, and — over a real socket,
+  against the real process — traversal containment, the 4 MiB body cap, the `Host`
+  allow-list, and clean shutdown.
+
+## Serving it over HTTP
+
+The HTTP transport is unauthenticated by design, because there is nothing to
+authenticate: the answer to any request is a file out of `content/`, and no tool holds a
+credential or reaches a network.
+
+That covers the **tools**. The **process** still listens, and the one guard in front of
+it — `MCP_ALLOWED_HOSTS`, a `Host` header allow-list — is **off when unset** and says so
+on stderr at startup. See [`../environments/env.md`](../environments/env.md).
 
 ## Requirements
 
@@ -55,3 +68,4 @@ build step** — the package ships source and Node runs it directly.
 * [`architecture.md`](architecture.md) — how the pieces fit together.
 * [`../environments/setup.md`](../environments/setup.md) — installing and running it.
 * [`../environments/env.md`](../environments/env.md) — environment variables.
+* [`../environments/docker.md`](../environments/docker.md) — running it as an image.
