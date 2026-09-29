@@ -23,9 +23,14 @@ Two dependencies: `@modelcontextprotocol/sdk` and `zod`.
 
 ## No authentication
 
-Nothing here reaches an external service, so there is no key to set and no environment
-variable to configure. The server starts, lists its tool, and answers every request with
-nothing configured. Full list of variables: [`env.md`](env.md).
+Nothing here reaches an external service, so there is **no key to set**. There are
+four environment variables, and all of them are optional — the server starts, lists its
+tool, and answers every request with none of them set. Full list:
+[`env.md`](env.md).
+
+Two of them are worth knowing about before you expose this over HTTP rather than
+stdio: `HOST` decides which interface the listener binds, and `MCP_ALLOWED_HOSTS` is a
+`Host` header allow-list that is **off when unset**.
 
 ## CLI mode
 
@@ -141,9 +146,30 @@ and `serve` prints nothing of its own. Only CLI commands write to stdout.
 
 A `console.log` on the server path is a bug that corrupts the protocol stream.
 
+## Container mode
+
+The server also ships as a container image — the same `src/` and `content/`, on a
+pinned Node runtime, as a non-root process.
+
+```bash
+docker build -t rbagents-security:0.1.0 .
+
+# stdio
+docker run --rm -i rbagents-security:0.1.0
+
+# streamable HTTP
+docker run --rm -p 3000:3000 -e MCP_TRANSPORT=http rbagents-security:0.1.0
+curl -s http://localhost:3000/healthz
+```
+
+`-i` is required on the stdio form, and `-p` is what publishes the port on the HTTP
+form — neither failure is loud. The image has never been built; [`docker.md`](docker.md)
+carries the full detail and that caveat.
+
 ## Related pages
 
 - [`env.md`](env.md) — every environment variable this project reads
+- [`docker.md`](docker.md) — running the server as a container image
 - [`../information/overview.md`](../information/overview.md) — what this project is
 - [`../information/architecture.md`](../information/architecture.md) — how the pieces fit
 - [`README.md`](../../README.md)

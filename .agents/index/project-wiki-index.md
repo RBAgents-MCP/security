@@ -21,6 +21,7 @@ description: Index of wiki/ - the human documentation tree, excluding wiki/logs/
 |---|---|
 | [`../../wiki/environments/setup.md`](../../wiki/environments/setup.md) | Installing and running both CLI mode and server mode. |
 | [`../../wiki/environments/env.md`](../../wiki/environments/env.md) | Every environment variable this project reads, and what happens when one is missing. |
+| [`../../wiki/environments/docker.md`](../../wiki/environments/docker.md) | Running the server as a container image: build, both run forms, and what is excluded from it. |
 
 ## Child Indexes
 

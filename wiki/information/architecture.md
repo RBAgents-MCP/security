@@ -1,6 +1,6 @@
 # Architecture
 
-Four source files and a folder of tools. There is no framework, no build step, and no
+Six source files and a folder of tools. There is no framework, no build step, and no
 code generation.
 
 ```
@@ -12,6 +12,7 @@ src/
   version.js   reads the version out of package.json at import
   tools/       one file per tool
 content/       the published set
+Dockerfile     the same two, on a pinned runtime
 ```
 
 ## Entry point and transports
@@ -26,7 +27,24 @@ content/       the published set
 The HTTP transport is **stateless**: a fresh `McpServer` and transport are built for
 each request and closed when the response closes. That is deliberate — `McpServer`
 holds per-connection state, so hoisting one to module scope would leak state between
-unrelated callers.
+unrelated callers. `test/http.test.js` asserts it with two simultaneous calls for
+different paths, each getting its own answer.
+
+Three guards sit in front of `/mcp`, all in `src/index.js`, all off by default:
+
+* **`HOST`** — which interface the listener binds. `0.0.0.0` by default, so a
+  container is reachable on every interface unless told otherwise. This is a
+  deployment decision, not a security control.
+* **`MCP_ALLOWED_HOSTS`** — a comma-separated `Host` header allow-list. **Unset means
+  no list is installed**, and the startup line on stderr says so, because silence is
+  indistinguishable from a guard that is working. Matching ignores the port, so one
+  hostname survives a proxy, a load balancer, and a container port mapping.
+* **A 4 MiB body cap** — the only bound on what an unauthenticated caller can make
+  the process hold in memory.
+
+On `SIGTERM` and `SIGINT` the listener drains for a short window and then closes what
+is still open, because `close()` alone waits on open connections and a keep-alive
+client would otherwise hold the process until the runtime killed it.
 
 ### stdout belongs to the protocol
 
@@ -34,6 +52,14 @@ On stdio, stdout **is** the JSON-RPC channel. Server-side logging goes to stderr
 `serve` prints nothing of its own; only CLI commands write to stdout. A `console.log`
 on the server path corrupts the stream, and the client reports a parse error that
 points nowhere useful.
+
+**This holds on the HTTP branch too, and that is worth being explicit about** — it is
+the kind of rule someone later "fixes" on the grounds that HTTP does not use stdout for
+anything. It does not, but `src/index.js` is **one process serving both transports**,
+branching at line 34, not two entry points that could each make their own choice. The
+same process, running the same request handler, would then write to stdout in one mode
+and not the other. So the HTTP startup line and the shutdown line go to stderr too, and
+`test/http.test.js` asserts stdout stays empty.
 
 ## The tool layer
 
@@ -88,7 +114,17 @@ which is the point. A thrown error would be distinguishable.
 
 ## Authentication
 
-There is none. No tool in this repository reads a credential, and none opens a socket.
+**No tool in this repository reads a credential, and no tool opens a socket.** That is
+the reason the set is safe to serve to anyone who can reach the process: every answer
+comes out of `content/`, nothing goes out to a network, and there is no stored secret
+for a caller to obtain.
+
+**The process does listen, on the HTTP transport.** Those are different claims and
+neither implies the other. "No tool opens a socket" describes the code that answers a
+request; it does not describe what the process does with a connection that arrives. If
+you deploy this over HTTP, something is reachable, and the question worth asking is what
+stands in front of it — a `Host` allow-list, a reverse proxy, a network boundary, or
+nothing at all. `MCP_ALLOWED_HOSTS` being unset means the first of those is absent.
 
 The template this repository was scaffolded from took one server-wide `API_KEY` and read
 it inside the handler of each tool that needed it. That pattern is still recorded in
@@ -110,3 +146,4 @@ suite.
 
 * [`overview.md`](overview.md) — what this project is.
 * [`../environments/setup.md`](../environments/setup.md) — running it.
+* [`../environments/docker.md`](../environments/docker.md) — running it as an image.

@@ -31,6 +31,14 @@ Node.js 20+, ESM, no build step. Two runtime dependencies:
   socket. The code that would write is absent rather than disabled.
 * **Surface parity.** `src/cli.js` prints `listTools()` from `src/server.js`;
   `test/server.test.js` pins the CLI list against the MCP client's `tools/list`.
+* **An HTTP transport, hardened.** `StreamableHTTPServerTransport` at `POST /mcp` plus
+  `GET /healthz`, stateless, with `HOST` binding, an `MCP_ALLOWED_HOSTS` `Host`
+  allow-list (off when unset, and it says so on stderr), a 4 MiB body cap, and a
+  drain-before-close shutdown. `test/http.test.js` covers all of it over a real socket
+  against the real process - see
+  [`../tasks/http-transport-and-docker.md`](../tasks/http-transport-and-docker.md).
+* **A container image.** `Dockerfile` and `.dockerignore`, `node:22-alpine`, `src/` and
+  `content/` only, non-root. **Written and reviewed as source; never built or run.**
 * **Instruction system.** Mode B - `AGENTS.md` plus `.agents/`, resolving the shared set
   through the `lxagents-agents-base` connector. Local rules: `repository`,
   `tool-authoring`, `secrets`. No overrides.
@@ -40,7 +48,12 @@ Node.js 20+, ESM, no build step. Two runtime dependencies:
 
 ## What is not built
 
-* The HTTP transport is stateless and unauthenticated; `/healthz` and `/mcp` are open.
+* **No container image has ever been built.** `Dockerfile` is source that has been read
+  and reviewed, not a verified artifact. `EXPOSE`, both run forms, and `npm ci` inside
+  the image are unproven.
+* The HTTP transport has no authentication, and the `Host` allow-list guarding it is
+  **off unless `MCP_ALLOWED_HOSTS` is set**. That is the intended default, not an
+  oversight, and an operator who has not read the startup line will not know.
 * No CI workflow, no linter, no formatter.
 * `content/` is a copy. A change to the set belongs upstream in the workspace set first;
   this repository is a delivery surface for it, not its editor.
@@ -55,5 +68,11 @@ here, and there are no overrides - see
 
 ## Next obvious step
 
-Add CI that runs `npm test` on push. The suite is the only thing holding the two surfaces
-and the traversal defence together, and nothing runs it automatically.
+Build the image, once, by hand. `Dockerfile` has been written and reviewed but never
+executed, so `EXPOSE`, both run forms, and `npm ci --omit=dev` inside the container are
+all unproven. That is the shortest outstanding gap between what this repository claims
+and what it has actually run.
+
+After that, add CI that runs `npm test` on push. The suite is the only thing holding the
+two surfaces, both transports, and the traversal defence together, and nothing runs it
+automatically.

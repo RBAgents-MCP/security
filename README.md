@@ -66,8 +66,9 @@ npm run cli -- tools
 npm start
 ```
 
-No key, no environment variable, no configuration. The server starts and answers with
-nothing set.
+No key. The server starts and answers with nothing set. There are four optional
+environment variables — `MCP_TRANSPORT`, `PORT`, `HOST`, and `MCP_ALLOWED_HOSTS` — and
+all four have a working default.
 
 ## Register it
 
@@ -75,9 +76,36 @@ nothing set.
 |---|---|
 | Local stdio | `command: node`, `args: ["src/index.js"]`, `cwd:` this checkout |
 | Local HTTP | `npm run start:http`, then `http://localhost:3000/mcp` |
+| Container | `docker build -t rbagents-security .` then `docker run --rm -p 3000:3000 -e MCP_TRANSPORT=http rbagents-security` — see [`wiki/environments/docker.md`](wiki/environments/docker.md) |
 | Remote | Settings → Connectors → Add custom connector → `https://<host>/mcp` |
 
 The `/mcp` path is not optional on either HTTP form.
+
+## Security note — the one exception
+
+> **No tool takes a credential, and no tool opens a socket.** That is what makes the set
+> safe to serve to anyone who can reach the process: every answer comes out of
+> `content/`, and there is no stored secret to obtain.
+>
+> **The process itself does listen,** on the HTTP transport. `MCP_ALLOWED_HOSTS` is a
+> comma-separated allow-list of `Host` header values guarding that listener against DNS
+> rebinding — a page in a browser being redirected at your loopback or container
+> address. It is worth setting here, because a container binds every interface, which is
+> precisely the deployment where the protection is off by default.
+>
+> **An empty value means the guard is off.** `MCP_ALLOWED_HOSTS` unset, set to `""`, or
+> set to commas and spaces all mean the same thing: no allow-list is installed and every
+> `Host` is accepted. That default is deliberate — a wrong list refuses every request,
+> which reads as a broken deployment rather than a misconfigured one — so the server
+> installs no list and says so on stderr at startup:
+>
+> ```text
+> rbagents-security 0.1.0 serving over http on all interfaces:3000/mcp - Host allow-list is off - MCP_ALLOWED_HOSTS is unset
+> ```
+>
+> If you see "allow-list is off" in a log, you are looking at a deployment with no
+> rebinding protection, whatever the configuration appears to say. Full reference:
+> [`wiki/environments/env.md`](wiki/environments/env.md).
 
 ## Documentation
 
@@ -87,6 +115,8 @@ The `/mcp` path is not optional on either HTTP form.
 - [`wiki/environments/setup.md`](wiki/environments/setup.md) — installing and running
   both modes.
 - [`wiki/environments/env.md`](wiki/environments/env.md) — environment variables.
+- [`wiki/environments/docker.md`](wiki/environments/docker.md) — running as a container
+  image.
 
 Full map: [`.agents/index/project-wiki-index.md`](.agents/index/project-wiki-index.md).
 
