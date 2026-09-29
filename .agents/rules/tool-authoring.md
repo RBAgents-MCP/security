@@ -1,16 +1,38 @@
 ---
 name: tool-authoring
-description: The contract for adding a tool - one file per tool under src/tools/, the config and handler exports, zod schemas, and registration.
+description: The contract for adding a tool - it is generated from content/, so the real work is authoring a markdown file with a name and a description.
 ---
 
 # Tool Authoring
 
-One tool is one file. This is what keeps the tool layer reviewable and stops
-`src/server.js` growing into the array this layer replaced.
+**You do not author a tool. You author a markdown file under `content/`, and the tool
+is generated from it.** Adding `content/roblox/security/example.md` adds the tool
+`example`, registers it, advertises it, and puts it in the CLI's `tools` output — with
+no code change and no second file to keep in step.
 
-## The surface is read-only
+This rule used to describe hand-writing `src/tools/{name}.js`. It no longer applies to
+this repository, and following it would produce a tool no client could find, because
+`TOOL_MODULES` is generated rather than assembled.
 
-This server has one tool and it is a read. Do not add a tool that takes a verb, a
+## What the generator does
+
+`src/tools/from-content.js` walks `content/` once, at import, and builds one tool per
+`.md` file:
+
+| Served file | Tool name |
+|---|---|
+| `index/roblox-security-index.md` | `roblox_security_index` |
+| `roblox/security/trust-boundaries.md` | `trust_boundaries` |
+| `roblox/security/zero-trust-networking.md` | `zero_trust_networking` |
+
+The name is the **basename**, with `.md` dropped, lowercased, and `-` turned to `_`. The
+folder is dropped, so a path's directories never reach the tool name. The description is
+the file's frontmatter `description:`, verbatim — the same text a reader gets by opening
+the file, which is what makes routing on it work.
+
+## The surface is read-only, and so is the way in
+
+Every tool here is a read. Do not add a file whose purpose is to take a verb, a
 credential, or a network call.
 
 The property is **structural**: the code that would write is absent, not disabled behind
@@ -18,65 +40,52 @@ a check. That is stronger than a permission check on a general-purpose tool, and
 what a consuming repository depends on when it points at this server — it cannot mutate
 the set, because there is nothing here that mutates anything.
 
-## File shape
+The same is true of the *argument*. No tool declares an input schema, so there is no path
+for a caller to traverse with, no verb for a caller to act on, and nothing to write. A
+generated tool cannot grow an argument, because there is no per-tool code to grow it in.
 
-A tool lives at `src/tools/{tool_name}.js`, where `{tool_name}` is the registered tool
-name character for character. It exports two things and a default that pairs them:
+## Adding a convention
 
-```js
-import { z } from "zod";
+1. Write the file under `content/`, with frontmatter carrying at least a `name:` and a
+   `description:`. The set's own convention also expects `version:` and `author:`.
+2. Give it a filename that survives derivation — a name that is a valid MCP tool name
+   (`^[a-z][a-z0-9_]{0,63}$` once derived) does not need a rename.
+3. Run `npm test` and `npm run cli -- tools`. The bijection test fails if the file did
+   not become a tool, and so does the case where its name collides with an existing one.
+4. Route to it from `content/index/roblox-security-index.md`, or it is reachable by name
+   but a caller will not know that.
 
-export const config = {
-  name: "roblox_security_instruction",
-  description: "Read one convention from the set by path, e.g. 'index/roblox-index.md'. Read-only - this tool cannot write.",
-  schema: {
-    path: z.string().describe("Path inside the set, e.g. 'roblox/language/luau-authoring.md'. Never a leading slash, never '..'."),
-  },
-};
+**A `description:` that a client cannot route on is a startup error, not a warning.** The
+generator throws at import rather than publishing a tool with an empty description.
 
-export async function handler({ path }) {
-  const text = await readSetFile(path);
-  if (text === null) {
-    return { content: [{ type: "text", text: `not found: ${path}` }] };
-  }
-  return { content: [{ type: "text", text }] };
-}
+`content/` is a **delivery surface, not an editor** — see [`repository.md`](repository.md).
+A change to a served file belongs upstream in the workspace set and is copied here.
 
-export default { config, handler };
-```
+## When a name does not derive cleanly
 
-| Export | Required | What it is |
-|---|---|---|
-| `config.name` | yes | The registered tool name. Matches the filename. |
-| `config.description` | yes | One line an agent can route on without calling the tool. |
-| `config.schema` | no | A **zod raw shape** - a plain object of zod validators. Omit it entirely for a tool that takes no arguments. |
-| `handler` | yes | `async (args) => ({ content: [...] })`. Receives the parsed arguments when a schema is declared, and nothing useful when it is not. |
-| default | yes | `{ config, handler }`, so `src/server.js` imports one binding per tool. |
+`NAME_OVERRIDES` in `src/tools/from-content.js` is the documented escape hatch, and it
+is **currently empty** — every file in the set falls out of the rule. Two situations
+call for it, and both are startup errors rather than silent behaviour:
 
-## The schema is a raw shape, not a z.object
+* a filename that derives a name which is not a valid MCP tool name;
+* two files in different folders with the same basename, where the second would silently
+  shadow the first.
 
-`server.tool(name, description, schema, handler)` expects a `ZodRawShape`. Pass
-`{ a: z.number() }`, never `z.object({ a: z.number() })` - wrapping it produces a tool
-whose input schema has no properties and whose handler receives nothing.
+Adding a row is a deliberate act. The second case has a real instance in this
+organisation — `RBAgents-MCP/shared-instruction` serves files of the same two names — and
+a namespace prefix was considered and rejected; see
+[`../memory/tasks/per-file-tools.md`](../memory/tasks/per-file-tools.md).
 
-Describe every field with `.describe()`. That text is what reaches the calling model as
-the parameter's documentation; without it the caller is guessing.
+## If a tool ever needs an argument
 
-## Registration
+It stops being generated. A per-tool file under `src/tools/`, imported individually into
+`TOOL_MODULES` in `src/server.js`, comes back — and with it the four-argument
+`server.tool(name, description, schema, handler)` form, where `schema` is a **zod raw
+shape** (`{ a: z.number() }`, never `z.object({ ... })`; wrapping it produces a tool that
+advertises no parameters and receives none).
 
-`src/server.js` imports each tool module individually and registers it:
-
-```js
-server.tool(config.name, config.description, config.schema, handler);
-```
-
-A tool with no `config.schema` is registered with the three-argument form instead. Both
-forms are in `src/server.js` already - follow whichever matches the tool.
-
-Adding a tool means two edits and nothing else: the new file, and its import plus its
-entry in the `TOOL_MODULES` array. Do not add a registration path that bypasses that
-array; `listTools()` and the CLI read it, and a tool registered outside it is invisible
-to both.
+That is a large enough change to be worth saying out loud before doing it. It gives back
+everything this surface is for.
 
 ## Authentication
 
@@ -84,14 +93,12 @@ No tool in this repository needs a credential. If one ever did, it checks **insi
 handler** — see [`secrets.md`](secrets.md). Never at module scope, and never as a
 condition on whether the tool is registered.
 
-## Paths into `content/`
+## Reading from the set
 
-A tool that reads from the set goes through `readSetFile` in `src/content.js`. Do not call
-`fs` directly from a handler: the traversal defence lives in that one place, and a second
-path to the filesystem is a second thing to get right.
-
-Return `not found` as ordinary content for an unknown path. That is a lookup miss, not a
-server fault, and a thrown error would be indistinguishable from a real failure.
+Do not call `fs` from anywhere that answers a call. The set is read once at import, and
+a tool call is a map lookup. A second path to the filesystem at call time is a second
+thing to get right, in a repository whose read-only property is the thing a consumer
+depends on.
 
 ## Errors
 
@@ -104,8 +111,12 @@ successful answer.
 
 ## Tests
 
-Every tool gets coverage in `test/server.test.js`:
+The generated surface is covered once, not per file:
 
-* it appears in `listTools()` and in the client's `tools/list`;
-* a tool with a schema has its parameters present in the advertised input schema;
-* a tool that requires the API key fails without it and succeeds with it.
+* every file in `content/` is a tool, and every tool is a file in `content/` — asserted
+  in both directions;
+* every tool name is derived from its own filename and is a usable MCP tool name;
+* no tool declares an input schema, and none requires an argument;
+* every tool serves its file byte for byte, frontmatter included, and the total served
+  text equals the total text on disk;
+* the index routes every convention, which is what keeps the entry point complete.

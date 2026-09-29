@@ -75,7 +75,7 @@ one. So the server does not guess at a list — it installs none, and it says so
 at startup:
 
 ```text
-rbagents-security 0.1.0 serving over http on all interfaces:3000/mcp - Host allow-list is off - MCP_ALLOWED_HOSTS is unset
+rbagents-security 1.0.0 serving over http on all interfaces:3000/mcp - Host allow-list is off - MCP_ALLOWED_HOSTS is unset
 ```
 
 Set the variable and that line changes to name the list instead. **If you see "allow-list

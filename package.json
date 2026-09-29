@@ -1,6 +1,6 @@
 {
   "name": "@rbagents-mcp/security",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Read-only MCP server delivering the Roblox security instruction set - client zero-trust, RemoteEvent and RemoteFunction payload validation, and where the client/server trust boundary goes.",
   "type": "module",
   "main": "src/index.js",

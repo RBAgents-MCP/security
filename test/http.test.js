@@ -141,11 +141,15 @@ function textOf(result) {
   return result.content[0].text;
 }
 
-/** One tool call against a fresh server over a real socket. */
-function call(client, path) {
-  return client
-    .callTool({ name: "roblox_security_instruction", arguments: { path } })
-    .then(textOf);
+/**
+ * One tool call against a fresh server over a real socket.
+ *
+ * By name, with no arguments. The HTTP path is the surface a container is
+ * published on, so the claim it has to carry is the one the tool list makes: every
+ * file is a tool, and none of them takes anything.
+ */
+function call(client, name) {
+  return client.callTool({ name, arguments: {} }).then(textOf);
 }
 
 /**
@@ -154,7 +158,7 @@ function call(client, path) {
  * The point of every comparison against this is that the transport must not be
  * able to change the answer.
  */
-async function inMemoryAnswer(path) {
+async function inMemoryAnswer(name) {
   const server = createServer({ version: "0.0.0" });
   const client = new Client({ name: "in-memory-client", version: "0.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -162,7 +166,7 @@ async function inMemoryAnswer(path) {
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
 
   try {
-    return await call(client, path);
+    return await call(client, name);
   } finally {
     await client.close();
     await server.close();
@@ -283,28 +287,31 @@ test("the health check reports the server it is", async () => {
   assert.equal(health.server, SERVER_ID);
 });
 
-test("the HTTP transport serves the same single tool as stdio", async () => {
+test("the HTTP transport serves the same tool surface as stdio", async () => {
   const server = await startServer();
   const client = await connect(server.port);
 
   const { tools } = await client.listTools();
 
-  assert.deepEqual(tools.map((tool) => tool.name), ["roblox_security_instruction"]);
+  assert.deepEqual(
+    tools.map((tool) => tool.name).sort(),
+    ["roblox_security_index", "trust_boundaries", "zero_trust_networking"]
+  );
 });
 
 test("a tool call over HTTP returns the file byte-identically", async () => {
   const server = await startServer();
   const client = await connect(server.port);
 
-  const path = "roblox/security/zero-trust-networking.md";
-  const overHttp = await call(client, path);
+  const name = "zero_trust_networking";
+  const overHttp = await call(client, name);
 
   // \r? because a checkout on Windows serves CRLF, and the bytes are served as
   // they are on disk.
   assert.match(overHttp, /^---\r?\n/, "frontmatter is part of the served text");
   assert.ok(overHttp.includes("name:"), "frontmatter is not stripped");
 
-  assert.equal(overHttp, await inMemoryAnswer(path), "the transport must not change the answer");
+  assert.equal(overHttp, await inMemoryAnswer(name), "the transport must not change the answer");
 });
 
 test("a tool call over HTTP needs no key", async () => {
@@ -313,7 +320,7 @@ test("a tool call over HTTP needs no key", async () => {
   const server = await startServer();
   const client = await connect(server.port);
 
-  const text = await call(client, "roblox/security/trust-boundaries.md");
+  const text = await call(client, "trust_boundaries");
   assert.ok(text.length > 500, "the set is served without a key");
 });
 
@@ -344,38 +351,55 @@ test("concurrent requests do not share state", async () => {
   // closed with it. Hoisting one to module scope would leak per-connection state
   // between unrelated callers, and this is the failure that would cause.
   const [first, second] = await Promise.all([
-    call(client, "roblox/security/zero-trust-networking.md"),
-    call(client, "roblox/security/trust-boundaries.md"),
+    call(client, "zero_trust_networking"),
+    call(client, "trust_boundaries"),
   ]);
 
   assert.notEqual(first, second, "each caller must get its own answer");
 
-  assert.equal(first, await inMemoryAnswer("roblox/security/zero-trust-networking.md"));
-  assert.equal(second, await inMemoryAnswer("roblox/security/trust-boundaries.md"));
+  assert.equal(first, await inMemoryAnswer("zero_trust_networking"));
+  assert.equal(second, await inMemoryAnswer("trust_boundaries"));
 });
 
-test("a traversal attempt over the wire reports not found and leaks nothing", async () => {
+test("a tool call over the wire cannot be steered by an argument", async () => {
+  // The traversal payloads the old path-taking tool needed guards for, sent
+  // against the new surface. There is no argument, so the only thing a caller can
+  // change is the name - and a name that is not in the list is refused by the
+  // server, not by a check in this repository's code. The real defence is that no
+  // tool has an argument at all, which `no tool accepts a write verb or a
+  // credential over HTTP either` and the in-memory no-argument test both assert.
   const server = await startServer();
   const client = await connect(server.port);
 
-  for (const path of [
+  for (const name of [
     "../../package.json",
     "../../../.git/config",
     "roblox/../../package.json",
     "/etc/passwd",
     "C:\\Windows\\System32\\drivers\\etc\\hosts",
     // The decode step that only a real socket can reach. As a JSON string body
-    // this arrives literally, never URL-decoded, so it is refused as a miss
-    // inside the set - which is the correct answer either way. Assert the
-    // answer, not the mechanism.
+    // this arrives literally, never URL-decoded.
     "..%2f..%2fpackage.json",
   ]) {
-    const text = await call(client, path);
+    // A name that is not in the tool list is refused, and the SDK surfaces that
+    // as a rejected call. Either way the assertion is the same one: nothing
+    // outside `content/` comes back over the wire.
+    const text = await client
+      .callTool({ name, arguments: {} })
+      .then(textOf)
+      .catch(() => "");
 
-    assert.match(text, /^not found:/, `${path} must be refused over HTTP`);
-    assert.doesNotMatch(text, /"name":/, `${path} must leak nothing`);
-    assert.doesNotMatch(text, /\[core\]/, `${path} must leak nothing`);
+    assert.doesNotMatch(text, /"name":/, `${name} must leak nothing`);
+    assert.doesNotMatch(text, /\[core\]/, `${name} must leak nothing`);
   }
+
+  // And an argument sent at a real tool is simply not there to be read.
+  const withArgument = await client
+    .callTool({ name: "zero_trust_networking", arguments: { path: "../../package.json" } })
+    .then(textOf);
+  const without = await call(client, "zero_trust_networking");
+
+  assert.equal(withArgument, without, "an unexpected argument cannot change the answer");
 });
 
 test("an unknown route is refused", async () => {
@@ -404,7 +428,10 @@ test("the process survives a bad request", async () => {
   const client = await connect(server.port);
   const { tools } = await client.listTools();
 
-  assert.deepEqual(tools.map((tool) => tool.name), ["roblox_security_instruction"]);
+  assert.deepEqual(
+    tools.map((tool) => tool.name).sort(),
+    ["roblox_security_index", "trust_boundaries", "zero_trust_networking"]
+  );
 });
 
 test("a body over the limit is refused and the process survives", async () => {
@@ -418,12 +445,16 @@ test("a body over the limit is refused and the process survives", async () => {
   // cleanly and come back as a 200 carrying a JSON-RPC error, so a 400 here can
   // only have come from the cap. Sending malformed JSON instead would make the
   // refusal indistinguishable from an ordinary parse error.
+  //
+  // The `path` argument is one no tool declares, which is the point: the cap
+  // fires in readBody, before the request ever reaches the tool layer, so it
+  // holds however the body is shaped and whatever the surface accepts.
   const oversized = Buffer.from(
     JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
       method: "tools/call",
-      params: { name: "roblox_security_instruction", arguments: { path: "a".repeat(4 * 1024 * 1024) } },
+      params: { name: "zero_trust_networking", arguments: { path: "a".repeat(4 * 1024 * 1024) } },
     }),
     "utf8"
   );
@@ -438,7 +469,10 @@ test("a body over the limit is refused and the process survives", async () => {
   const client = await connect(server.port);
   const { tools } = await client.listTools();
 
-  assert.deepEqual(tools.map((tool) => tool.name), ["roblox_security_instruction"]);
+  assert.deepEqual(
+    tools.map((tool) => tool.name).sort(),
+    ["roblox_security_index", "trust_boundaries", "zero_trust_networking"]
+  );
 });
 
 test("the process exits on SIGTERM, draining first", async () => {

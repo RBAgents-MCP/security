@@ -21,7 +21,8 @@ The CLI (`rbagents-security`) and the MCP server (`rbagents-security-server`) ar
 implementation. A tool reachable from one is reachable from the other, with the same name
 and the same description.
 
-* Tools are declared in exactly one place: `src/server.js`.
+* Tools are derived in exactly one place: `src/tools/from-content.js`, from `content/`.
+  `src/server.js` freezes that list and registers it; it does not declare it.
 * `src/cli.js` never maintains its own list - it reads the declaration from
   `src/server.js`.
 * `test/server.test.js` pins the agreement. A change that makes the two surfaces
@@ -41,9 +42,9 @@ that names nothing useful.
 
 | Thing | Path |
 |---|---|
-| The served set | `content/` |
-| Tool declarations | `src/server.js` |
-| Path resolution and the traversal defence | `src/content.js` |
+| The served set, and the source of the tool surface | `content/` |
+| Where the tool surface is generated | `src/tools/from-content.js` |
+| Where the surface is registered | `src/server.js` |
 | CLI commands | `src/cli.js` |
 | Transport and entry point | `src/index.js` |
 | Tests | `test/{subject}.test.js` |
@@ -59,9 +60,9 @@ npm start         # stdio
 npm run start:http
 npm run inspect   # MCP Inspector against the stdio server
 
-docker build -t rbagents-security:0.1.0 .
-docker run --rm -i rbagents-security:0.1.0
-docker run --rm -p 3000:3000 -e MCP_TRANSPORT=http rbagents-security:0.1.0
+docker build -t rbagents-security:1.0.0 .
+docker run --rm -i rbagents-security:1.0.0
+docker run --rm -p 3000:3000 -e MCP_TRANSPORT=http rbagents-security:1.0.0
 ```
 
 The image is **not built by this repository's own workflow**. `Dockerfile` and
@@ -71,12 +72,19 @@ so `npm test` cannot run inside the image either way. Run the suite on the host.
 ## What must not be introduced
 
 * A build step. This package ships source and is run directly by Node.
-* A second source of truth for the tool list.
+* A second source of truth for the tool list. The list is derived from `content/`;
+  writing it down anywhere else is a second truth even when the two agree today.
+* A per-tool file under `src/tools/`. The surface is generated. A hand-written tool
+  would not be in `TOOL_MODULES`, and so would be invisible to `listTools()`, to the
+  CLI, and to the bijection test - which is why none can be added without a decision
+  that it should exist at all.
 * Shared instruction content. If it can be read from `agents://`, it must not exist
   here as a file.
 * A write path. No tool may take a verb, a credential, or reach a network. The
   read-only property is structural - the code that would write is absent - and it is
-  the property a consuming repository depends on when it points at this server.
+  the property a consuming repository depends on when it points at this server. The
+  absence of an **argument** is the same claim one level up: no tool declares an input
+  schema, so there is no path for a caller to traverse with.
 * A write path through the container. `Dockerfile` is a **new distribution surface**
   for a repository whose defining property is that it is read-only, and it is the one
   place where this repository's code could be shipped somewhere other than an npm
