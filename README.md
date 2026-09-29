@@ -104,7 +104,7 @@ The `/mcp` path is not optional on either HTTP form.
 > installs no list and says so on stderr at startup:
 >
 > ```text
-> rbagents-security 0.1.0 serving over http on all interfaces:3000/mcp - Host allow-list is off - MCP_ALLOWED_HOSTS is unset
+> rbagents-security 1.0.0 serving over http on all interfaces:3000/mcp - Host allow-list is off - MCP_ALLOWED_HOSTS is unset
 > ```
 >
 > If you see "allow-list is off" in a log, you are looking at a deployment with no

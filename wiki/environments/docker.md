@@ -29,7 +29,7 @@ container makes it *reachable*, and reachable is a different property from *boun
 ## Build
 
 ```bash
-docker build -t rbagents-security:0.1.0 .
+docker build -t rbagents-security:1.0.0 .
 ```
 
 Tag with the version from `package.json`, not `latest`. This repository's rule is
@@ -39,7 +39,7 @@ that version rather than float.
 ## Run — stdio
 
 ```bash
-docker run --rm -i rbagents-security:0.1.0
+docker run --rm -i rbagents-security:1.0.0
 ```
 
 **`-i` is not optional.** Without it the container's stdin is closed, the server sees
@@ -49,7 +49,7 @@ a missing flag.
 ## Run — streamable HTTP
 
 ```bash
-docker run --rm -p 3000:3000 -e MCP_TRANSPORT=http rbagents-security:0.1.0
+docker run --rm -p 3000:3000 -e MCP_TRANSPORT=http rbagents-security:1.0.0
 curl -s http://localhost:3000/healthz
 ```
 
@@ -75,7 +75,7 @@ matters least on a loopback-only developer machine matters most here.
 docker run --rm -p 3000:3000 \
   -e MCP_TRANSPORT=http \
   -e MCP_ALLOWED_HOSTS=security.example.com \
-  rbagents-security:0.1.0
+  rbagents-security:1.0.0
 ```
 
 **Unset means the guard is off** — that is the rule most likely to be misread, and it

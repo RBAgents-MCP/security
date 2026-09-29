@@ -60,9 +60,9 @@ npm start         # stdio
 npm run start:http
 npm run inspect   # MCP Inspector against the stdio server
 
-docker build -t rbagents-security:0.1.0 .
-docker run --rm -i rbagents-security:0.1.0
-docker run --rm -p 3000:3000 -e MCP_TRANSPORT=http rbagents-security:0.1.0
+docker build -t rbagents-security:1.0.0 .
+docker run --rm -i rbagents-security:1.0.0
+docker run --rm -p 3000:3000 -e MCP_TRANSPORT=http rbagents-security:1.0.0
 ```
 
 The image is **not built by this repository's own workflow**. `Dockerfile` and

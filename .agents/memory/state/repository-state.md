@@ -7,7 +7,7 @@ description: Current known state of rbagents-security - a per-file tool surface 
 
 ## What this repository is right now
 
-`rbagents-security` is a working dual-purpose MCP server and CLI at version `0.1.0`. It
+`rbagents-security` is a working dual-purpose MCP server and CLI at version `1.0.0`. It
 serves the Roblox security set read-only, one tool per file. It is not a template:
 `PROMPT.md` and `template-mode.md` are gone, and the tool surface is generated from
 `content/` rather than written down.

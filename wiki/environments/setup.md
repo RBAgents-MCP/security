@@ -155,13 +155,13 @@ The server also ships as a container image — the same `src/` and `content/`, o
 pinned Node runtime, as a non-root process.
 
 ```bash
-docker build -t rbagents-security:0.1.0 .
+docker build -t rbagents-security:1.0.0 .
 
 # stdio
-docker run --rm -i rbagents-security:0.1.0
+docker run --rm -i rbagents-security:1.0.0
 
 # streamable HTTP
-docker run --rm -p 3000:3000 -e MCP_TRANSPORT=http rbagents-security:0.1.0
+docker run --rm -p 3000:3000 -e MCP_TRANSPORT=http rbagents-security:1.0.0
 curl -s http://localhost:3000/healthz
 ```
 
