@@ -8,7 +8,7 @@ request.
 | `MCP_TRANSPORT` | `stdio` | `src/index.js` | `stdio` or `http` (`streamable-http` is accepted too). |
 | `PORT` | `3000` | `src/index.js` | The port the HTTP transport listens on. Ignored on stdio. |
 | `HOST` | `0.0.0.0` | `src/index.js` | The interface the HTTP transport binds. Ignored on stdio. |
-| `MCP_ALLOWED_HOSTS` | unset | `src/index.js` | Comma-separated `Host` header allow-list. **Unset means the guard is off.** HTTP only. |
+| `MCP_ALLOWED_HOSTS` | unset | `src/app.js` | Comma-separated `Host` header allow-list. **Unset means the guard is off.** HTTP only. |
 
 ## There is no `API_KEY`
 
@@ -102,6 +102,21 @@ by default, which is exactly the shape where the protection is worth turning on.
 `localhost`, because a proxy, a load balancer, and a container port mapping each present
 a different port for the same server. Write hostnames without ports. An IPv6 literal keeps
 its brackets: `[::1]`.
+
+### What a refusal looks like
+
+When a list is set, the check is the MCP SDK's own `hostHeaderValidation` middleware,
+mounted by `src/app.js`. Every refusal is `403` with a JSON-RPC error of code `-32000`,
+and the message is the SDK's:
+
+| Case | Body |
+|---|---|
+| `Host` is not on the list | `Invalid Host: <name>` |
+| No `Host` header at all | `Missing Host header` |
+| `Host` cannot be parsed | `Invalid Host header: <value>` |
+
+The status and the error code are what a client branches on, and they are the same
+whatever the cause. Only the message distinguishes them.
 
 ### It guards the health check too
 

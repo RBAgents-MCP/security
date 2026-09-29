@@ -1,11 +1,11 @@
 # Architecture
 
-Five source files, one of which generates the tool surface. There is no framework and no
-build step.
+Six source files, one of which generates the tool surface. There is no build step.
 
 ```
 src/
   index.js     entry point: picks a transport, owns the HTTP server
+  app.js       the express application, as a pure factory — builds, never listens
   server.js    builds the McpServer, registers every tool, exports listTools()
   cli.js       the CLI: help, version, tools, serve
   version.js   reads the version out of package.json at import
@@ -15,14 +15,19 @@ content/       the published set
 Dockerfile     the same two, on a pinned runtime
 ```
 
+`app.js` and `index.js` are split on purpose. `app.js` returns an express app and
+nothing else — it does not listen. A file that both builds the app and binds a port
+cannot be reasoned about without binding one, and `test/http.test.js` starts the real
+entry point as a real child process precisely so the port and the process lifetime are
+real.
+
 ## Entry point and transports
 
 `src/index.js` reads `MCP_TRANSPORT` and serves either way:
 
 * **stdio** (default) — one `McpServer` connected to a `StdioServerTransport` for the
   life of the process.
-* **streamable HTTP** — a plain `node:http` server exposing `GET /healthz` and
-  `POST /mcp`.
+* **streamable HTTP** — an express application exposing `GET /healthz` and `POST /mcp`.
 
 The HTTP transport is **stateless**: a fresh `McpServer` and transport are built for
 each request and closed when the response closes. That is deliberate — `McpServer`
@@ -30,17 +35,26 @@ holds per-connection state, so hoisting one to module scope would leak state bet
 unrelated callers. `test/http.test.js` asserts it with two simultaneous calls for
 different tools, each getting its own answer.
 
-Three guards sit in front of `/mcp`, all in `src/index.js`, all off by default:
+Three guards sit in front of `/mcp`, all in `src/app.js`, all off by default:
 
 * **`HOST`** — which interface the listener binds. `0.0.0.0` by default, so a
   container is reachable on every interface unless told otherwise. This is a
   deployment decision, not a security control.
 * **`MCP_ALLOWED_HOSTS`** — a comma-separated `Host` header allow-list. **Unset means
   no list is installed**, and the startup line on stderr says so, because silence is
-  indistinguishable from a guard that is working. Matching ignores the port, so one
-  hostname survives a proxy, a load balancer, and a container port mapping.
+  indistinguishable from a guard that is working. When a list *is* set the check is
+  the MCP SDK's own `hostHeaderValidation` middleware, mounted natively by express
+  above the body parser and above every route. Matching ignores the port, so one
+  hostname survives a proxy, a load balancer, and a container port mapping. A refusal
+  is `403` with `-32000` and the SDK's own message — `Invalid Host: <name>`, or
+  `Missing Host header` when there is none.
 * **A 4 MiB body cap** — the only bound on what an unauthenticated caller can make
-  the process hold in memory.
+  the process hold in memory. An oversized body and a malformed one are both answered
+  `400` / `-32700`, which is deliberate: the hand-rolled reader that was replaced
+  threw one failure for both, so a client was never taught to expect anything
+  different for the second case. `X-Powered-By` is disabled for the same reason the
+  allow-list exists: it hands an unauthenticated caller the framework and its version
+  for free.
 
 On `SIGTERM` and `SIGINT` the listener drains for a short window and then closes what
 is still open, because `close()` alone waits on open connections and a keep-alive

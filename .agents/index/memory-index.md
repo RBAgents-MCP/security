@@ -23,6 +23,7 @@ current request.
 | File | Purpose |
 |---|---|
 | [`../memory/decisions/harness-branch-naming.md`](../memory/decisions/harness-branch-naming.md) | Why a harness-designated branch never overrides the branching strategy. |
+| [`../memory/decisions/express-for-http-transport.md`](../memory/decisions/express-for-http-transport.md) | Why the HTTP transport moved from `node:http` to express, and why the hand-rolled `Host` guard was deleted in favour of the SDK's middleware. |
 
 ## Tasks
 

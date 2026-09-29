@@ -47,6 +47,7 @@ that names nothing useful.
 | Where the surface is registered | `src/server.js` |
 | CLI commands | `src/cli.js` |
 | Transport and entry point | `src/index.js` |
+| The HTTP application, built as a pure factory | `src/app.js` |
 | Tests | `test/{subject}.test.js` |
 | The container image | `Dockerfile`, and `.dockerignore` for what it excludes |
 

@@ -10,13 +10,14 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { spawn } from "node:child_process";
-import { createServer as createNetServer } from "node:net";
+import { connect as netConnect, createServer as createNetServer } from "node:net";
 import { request as httpRequest } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { BODY_LIMIT_BYTES } from "../src/app.js";
 import { SERVER_ID, createServer } from "../src/server.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -104,6 +105,10 @@ async function startServer(env = {}) {
  * `fetch` silently drops `Host` as a forbidden header name, so an allow-list
  * exercised through `fetch` would pass whatever the real control does. This
  * goes through `node:http`, which lets the header be set.
+ *
+ * The response headers come back too: `X-Powered-By` is the one a framework
+ * adds whether or not any route asked for it, so it is asserted on the response
+ * rather than on the app object.
  */
 function requestWithHost(port, hostHeader, path = "/healthz") {
   return new Promise((resolve, reject) => {
@@ -113,13 +118,52 @@ function requestWithHost(port, hostHeader, path = "/healthz") {
         const chunks = [];
         res.on("data", (chunk) => chunks.push(chunk));
         res.on("end", () =>
-          resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString("utf8") })
+          resolve({
+            status: res.statusCode,
+            headers: res.headers,
+            body: Buffer.concat(chunks).toString("utf8"),
+          })
         );
       }
     );
 
     req.on("error", reject);
     req.end();
+  });
+}
+
+/**
+ * Send a raw request line and nothing else, over a bare socket.
+ *
+ * `node:http` cannot produce this: it synthesises a `Host` header for every
+ * HTTP/1.1 request, replaces an empty one with the address it dialled, and its
+ * own parser answers a Host-less HTTP/1.1 request with a 400 before any
+ * application code runs. A raw HTTP/1.0 line is the only way to put a request
+ * in front of the guard that genuinely names no deployment.
+ *
+ * @param {number} port
+ * @param {string} path
+ * @param {string} version - the HTTP version to write on the request line
+ */
+function rawRequest(port, path, version) {
+  return new Promise((resolve, reject) => {
+    const socket = netConnect(port, "127.0.0.1", () => {
+      socket.write(`GET ${path} ${version}\r\n\r\n`);
+    });
+
+    let raw = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      raw += chunk;
+    });
+    socket.on("end", () => {
+      const split = raw.indexOf("\r\n\r\n");
+      const [head, body = ""] =
+        split === -1 ? [raw, ""] : [raw.slice(0, split), raw.slice(split + 4)];
+      const status = Number.parseInt(head.split(" ")[1] ?? "", 10);
+      resolve({ status: Number.isNaN(status) ? null : status, body });
+    });
+    socket.on("error", reject);
   });
 }
 
@@ -227,12 +271,71 @@ test("the Host allow-list refuses a host that is not on it", async () => {
 
   const refused = await requestWithHost(server.port, "evil.example.com");
   assert.equal(refused.status, 403);
-  assert.match(refused.body, /Host not allowed/);
+  // The SDK middleware's own message, not a hand-rolled one. The status and the
+  // JSON-RPC code are what a client branches on and both are unchanged; the
+  // message is named here so that swapping the guard for the SDK's is visible
+  // in the diff rather than silent.
+  assert.match(refused.body, /Invalid Host: evil\.example\.com/);
+  assert.equal(JSON.parse(refused.body).error.code, -32000);
 
   // The /mcp endpoint is guarded by the same check as the health check, so a
   // rebinding attack cannot reach the tools by asking for the other path.
   const refusedMcp = await requestWithHost(server.port, "evil.example.com", "/mcp");
   assert.equal(refusedMcp.status, 403);
+});
+
+test("a request with no Host header at all is refused", async () => {
+  // Refused today by the hand-rolled guard, and refused after the convergence by
+  // the SDK's. It has to stay refused: a request that names no deployment is not
+  // tied to any of them, so an allow-list that waves it through is not an
+  // allow-list.
+  const server = await startServer({ MCP_ALLOWED_HOSTS: "security.example.com" });
+
+  // HTTP/1.0, because that is the only shape that reaches the guard with no Host
+  // on it. Over HTTP/1.1 the request never gets that far - see the test below.
+  const refused = await rawRequest(server.port, "/healthz", "HTTP/1.0");
+  assert.equal(refused.status, 403);
+  assert.match(refused.body, /Missing Host header/);
+  assert.equal(JSON.parse(refused.body).error.code, -32000);
+});
+
+test("a Host-less HTTP/1.1 request is refused by the parser before the guard sees it", async () => {
+  // Recorded because it is the shape most readers will assume the test above is
+  // exercising. It is not: Node's HTTP/1.1 parser requires the header and
+  // answers a request without one with its own 400, before express, before the
+  // guard, before anything in this repository runs. The result is still a
+  // refusal, and it is still not a JSON-RPC envelope, so it is asserted as what
+  // it is rather than folded into the case above.
+  const server = await startServer({ MCP_ALLOWED_HOSTS: "security.example.com" });
+
+  const refused = await rawRequest(server.port, "/healthz", "HTTP/1.1");
+  assert.equal(refused.status, 400);
+  assert.doesNotMatch(refused.body, /Missing Host header/);
+});
+
+test("an unparseable Host header is refused, and named separately", async () => {
+  // A third outcome, distinct from both of the above. The hand-rolled parser had
+  // none: an unparseable header fell through to the not-allowed branch. The SDK
+  // refuses it on its own terms, and the status is the same 403 either way -
+  // which is the property that makes this convergence safe for a client.
+  const server = await startServer({ MCP_ALLOWED_HOSTS: "security.example.com" });
+
+  const refused = await requestWithHost(server.port, "not a host");
+  assert.equal(refused.status, 403);
+  assert.match(refused.body, /Invalid Host header: not a host/);
+  assert.equal(JSON.parse(refused.body).error.code, -32000);
+});
+
+test("a bracketed IPv6 Host matches when the list names it that way", async () => {
+  // `[::1]` is the form the header actually carries, and the form the SDK's
+  // parser returns, so a list that writes it is the only one that works. Getting
+  // this wrong fails closed - the health check of a container bound to ::1 would
+  // be refused by its own allow-list - so it is asserted rather than assumed.
+  const server = await startServer({ MCP_ALLOWED_HOSTS: "[::1]" });
+
+  assert.equal((await requestWithHost(server.port, "[::1]")).status, 200);
+  assert.equal((await requestWithHost(server.port, "[::1]:8080")).status, 200);
+  assert.equal((await requestWithHost(server.port, "::1")).status, 403);
 });
 
 test("an allowed host is served, and the port is not part of the match", async () => {
@@ -267,6 +370,43 @@ test("the startup line says when the Host allow-list is off", async () => {
   // assertion pass for a server warning about nothing.
   assert.doesNotMatch(set.output.stderr, /allow-list is off/);
   assert.match(set.output.stderr, /allow-list is 127\.0\.0\.1/);
+});
+
+test("an empty or separators-only allow-list is the guard being off, not allow-nothing", async () => {
+  // Three forms of the same state, all of them the default an operator reaches by
+  // accident: never set it, set it to nothing, or set it to commas and spaces
+  // because the variable exists and a deployment template filled it in.
+  //
+  // All three must serve every host and all three must say so on startup. The
+  // failure this guards against is the one that looks like a security control
+  // working: a list that trims to nothing but is still treated as a list refuses
+  // every request, and the deployment reads as broken rather than misconfigured.
+  for (const value of [undefined, "", " , , "]) {
+    const server = await startServer(
+      value === undefined ? {} : { MCP_ALLOWED_HOSTS: value }
+    );
+
+    assert.match(
+      server.output.stderr,
+      /allow-list is off - MCP_ALLOWED_HOSTS is unset/,
+      `MCP_ALLOWED_HOSTS=${JSON.stringify(value)} must be reported as unset`
+    );
+
+    // Served, not refused: a host nobody named is still answered, because no
+    // list is installed to have an opinion about it.
+    assert.equal(
+      (await requestWithHost(server.port, "anything.example.com")).status,
+      200,
+      `MCP_ALLOWED_HOSTS=${JSON.stringify(value)} must not install a list`
+    );
+    assert.equal(
+      (await requestWithHost(server.port, "evil.example.com", "/mcp")).status,
+      405,
+      `MCP_ALLOWED_HOSTS=${JSON.stringify(value)} must reach the route table`
+    );
+
+    server.child.kill("SIGKILL");
+  }
 });
 
 test("the HTTP server logs to stderr and never to stdout", async () => {
@@ -437,8 +577,8 @@ test("the process survives a bad request", async () => {
 test("a body over the limit is refused and the process survives", async () => {
   const server = await startServer();
 
-  // readBody caps a body at 4 MiB, and an unauthenticated caller reaching an
-  // open listener is the one place here that can be made to consume unbounded
+  // The body parser caps a body at 4 MiB, and an unauthenticated caller reaching
+  // an open listener is the one place here that can be made to consume unbounded
   // memory. It is also the only guard in the HTTP path nothing asserts.
   //
   // The payload is deliberately valid JSON: without the size cap it would parse
@@ -447,8 +587,8 @@ test("a body over the limit is refused and the process survives", async () => {
   // refusal indistinguishable from an ordinary parse error.
   //
   // The `path` argument is one no tool declares, which is the point: the cap
-  // fires in readBody, before the request ever reaches the tool layer, so it
-  // holds however the body is shaped and whatever the surface accepts.
+  // fires in the body parser, before the request ever reaches the tool layer, so
+  // it holds however the body is shaped and whatever the surface accepts.
   const oversized = Buffer.from(
     JSON.stringify({
       jsonrpc: "2.0",
@@ -464,6 +604,11 @@ test("a body over the limit is refused and the process survives", async () => {
   const refused = await postRaw(server.port, oversized);
 
   assert.equal(refused.status, 400, "an oversized body must be refused before it is parsed");
+  // The same answer an oversized body and a malformed one have always shared. The
+  // hand-rolled reader threw one failure for both, so a client that learned to
+  // expect -32700 on a malformed body was never taught anything else for a large
+  // one; splitting the two would be a behaviour change nobody asked for.
+  assert.equal(JSON.parse(refused.body).error.code, -32700);
   assert.equal(server.child.exitCode, null, "the process must still be running");
 
   const client = await connect(server.port);
@@ -473,6 +618,84 @@ test("a body over the limit is refused and the process survives", async () => {
     tools.map((tool) => tool.name).sort(),
     ["roblox_security_index", "trust_boundaries", "zero_trust_networking"]
   );
+});
+
+/* -------------------------------------------------------------------------- *
+ * The body limit, and the framework that replaced the reader.
+ * -------------------------------------------------------------------------- */
+
+test("the body limit is the 4 MB it was before express", () => {
+  // Pinned as a number, not just as a relation to whatever the constant now says. A
+  // limit that quietly became 64 MB would keep every boundary test in this file
+  // passing, and the number is a documented property of the transport rather than
+  // an implementation detail.
+  assert.equal(BODY_LIMIT_BYTES, 4 * 1024 * 1024);
+});
+
+test("malformed JSON gets exactly the same answer as a body that is too large", async () => {
+  // Not tidiness. The hand-rolled reader this replaced threw one failure for both
+  // cases, so a client was never taught to expect anything different for the
+  // second. The two paths through express are genuinely different - `entity.parse
+  // .failed` and `entity.too.large` - and the error handler collapses them on
+  // purpose, which is a claim about them that only a test can hold.
+  const server = await startServer();
+
+  const malformed = await postRaw(server.port, "{ this is not json");
+  const oversized = await postRaw(
+    server.port,
+    Buffer.from(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { padding: "x".repeat(BODY_LIMIT_BYTES) },
+      }),
+      "utf8"
+    )
+  );
+
+  for (const [what, response] of [
+    ["a malformed body", malformed],
+    ["an oversized body", oversized],
+  ]) {
+    assert.equal(response.status, 400, `${what} must be refused`);
+    assert.equal(JSON.parse(response.body).jsonrpc, "2.0", `${what} must answer in the envelope`);
+    assert.equal(JSON.parse(response.body).error.code, -32700, `${what} must answer -32700`);
+    assert.equal(
+      JSON.parse(response.body).error.message,
+      "Parse error: request body is not valid JSON",
+      `${what} must give the same message`
+    );
+  }
+});
+
+test("no response advertises that the server is running express", async () => {
+  const server = await startServer();
+
+  // Checked on a served route, on the catch-all and on the 405, because the 404
+  // and the 405 are produced by middleware rather than by a route and could
+  // plausibly have taken a different path through the stack. `X-Powered-By` hands
+  // an unauthenticated caller the framework and its version, which is a free
+  // upgrade suggestion.
+  const responses = await Promise.all([
+    requestWithHost(server.port, "127.0.0.1", "/healthz"),
+    requestWithHost(server.port, "127.0.0.1", "/nope"),
+    requestWithHost(server.port, "127.0.0.1", "/mcp"),
+  ]);
+
+  assert.deepEqual(
+    responses.map((response) => response.status),
+    [200, 404, 405],
+    "the three responses are the ones being checked for a header"
+  );
+
+  for (const response of responses) {
+    assert.equal(
+      response.headers["x-powered-by"],
+      undefined,
+      `X-Powered-By leaked on a ${response.status}`
+    );
+  }
 });
 
 test("the process exits on SIGTERM, draining first", async () => {
