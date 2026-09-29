@@ -53,6 +53,14 @@ On stdio, stdout **is** the JSON-RPC channel. Server-side logging goes to stderr
 on the server path corrupts the stream, and the client reports a parse error that
 points nowhere useful.
 
+**This holds on the HTTP branch too, and that is worth being explicit about** — it is
+the kind of rule someone later "fixes" on the grounds that HTTP does not use stdout for
+anything. It does not, but `src/index.js` is **one process serving both transports**,
+branching at line 34, not two entry points that could each make their own choice. The
+same process, running the same request handler, would then write to stdout in one mode
+and not the other. So the HTTP startup line and the shutdown line go to stderr too, and
+`test/http.test.js` asserts stdout stays empty.
+
 ## The tool layer
 
 Each tool is one file at `src/tools/{tool_name}.js`, exporting a `config` and a

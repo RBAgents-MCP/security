@@ -47,6 +47,7 @@ that names nothing useful.
 | CLI commands | `src/cli.js` |
 | Transport and entry point | `src/index.js` |
 | Tests | `test/{subject}.test.js` |
+| The container image | `Dockerfile`, and `.dockerignore` for what it excludes |
 
 ## Commands
 
@@ -57,7 +58,15 @@ npm run cli -- tools
 npm start         # stdio
 npm run start:http
 npm run inspect   # MCP Inspector against the stdio server
+
+docker build -t rbagents-security:0.1.0 .
+docker run --rm -i rbagents-security:0.1.0
+docker run --rm -p 3000:3000 -e MCP_TRANSPORT=http rbagents-security:0.1.0
 ```
+
+The image is **not built by this repository's own workflow**. `Dockerfile` and
+`.dockerignore` are written and reviewed as source; `.dockerignore` excludes `test/`,
+so `npm test` cannot run inside the image either way. Run the suite on the host.
 
 ## What must not be introduced
 
@@ -68,5 +77,16 @@ npm run inspect   # MCP Inspector against the stdio server
 * A write path. No tool may take a verb, a credential, or reach a network. The
   read-only property is structural - the code that would write is absent - and it is
   the property a consuming repository depends on when it points at this server.
+* A write path through the container. `Dockerfile` is a **new distribution surface**
+  for a repository whose defining property is that it is read-only, and it is the one
+  place where this repository's code could be shipped somewhere other than an npm
+  consumer. That has consequences the rest of this file does not cover: an image is
+  built, tagged and pushed from outside this repository, and once it is published it
+  is a version of the product that no pull request in this repository governs. Two
+  rules follow. **Nothing may be pushed to a registry without the owner asking for
+  it** - `AGENTS.md` gates publishing the same way it gates a pull request. And a
+  change under `content/` is invisible to a published image until it is rebuilt, so
+  the tag on an image must track the version in `package.json` rather than float on
+  `latest`.
 * An edit to a file under `content/`. Those files are copied from the upstream
   workspace set; the change belongs there, and this repository follows it.

@@ -28,6 +28,8 @@ current request.
 
 | File | Purpose |
 |---|---|
+| [`../memory/tasks/http-transport-and-docker.md`](../memory/tasks/http-transport-and-docker.md) | HTTP transport hardening and the container image: what shipped, the decisions, and why the image is still unbuilt. |
+
 ## Maintenance
 
 Any file added to or removed from `.agents/memory/` is reflected here **in the same
