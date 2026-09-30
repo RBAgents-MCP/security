@@ -70,9 +70,9 @@ npm run cli -- tools
 npm start
 ```
 
-No key. The server starts and answers with nothing set. There are four optional
-environment variables — `MCP_TRANSPORT`, `PORT`, `HOST`, and `MCP_ALLOWED_HOSTS` — and
-all four have a working default.
+No key. The server starts and answers with nothing set. There are five optional
+environment variables — `MCP_TRANSPORT`, `PORT`, `HOST`, `MCP_ALLOWED_HOSTS`, and
+`MCP_CLUSTER_WORKERS` — and all five have a working default.
 
 ## Register it
 

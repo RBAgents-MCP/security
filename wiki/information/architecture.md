@@ -4,7 +4,7 @@ Six source files, one of which generates the tool surface. There is no build ste
 
 ```
 src/
-  index.js     entry point: picks a transport, owns the HTTP server
+  index.js     entry point: picks a transport, and owns the cluster
   app.js       the express application, as a pure factory — builds, never listens
   server.js    builds the McpServer, registers every tool, exports listTools()
   cli.js       the CLI: help, version, tools, serve
@@ -26,8 +26,10 @@ real.
 `src/index.js` reads `MCP_TRANSPORT` and serves either way:
 
 * **stdio** (default) — one `McpServer` connected to a `StdioServerTransport` for the
-  life of the process.
-* **streamable HTTP** — an express application exposing `GET /healthz` and `POST /mcp`.
+  life of the process. Never forked: stdout is the JSON-RPC channel, and a worker's copy
+  of it would corrupt the stream.
+* **streamable HTTP** — an express application exposing `GET /healthz` and `POST /mcp`,
+  served by `node:cluster` workers on one `PORT`.
 
 The HTTP transport is **stateless**: a fresh `McpServer` and transport are built for
 each request and closed when the response closes. That is deliberate — `McpServer`
@@ -59,6 +61,30 @@ Three guards sit in front of `/mcp`, all in `src/app.js`, all off by default:
 On `SIGTERM` and `SIGINT` the listener drains for a short window and then closes what
 is still open, because `close()` alone waits on open connections and a keep-alive
 client would otherwise hold the process until the runtime killed it.
+
+## Workers
+
+On HTTP, a `node:cluster` primary forks `MCP_CLUSTER_WORKERS` processes (default:
+`os.availableParallelism()`) and every worker binds the same `PORT`. The kernel's shared
+listening handle and the round-robin scheduler do the distribution, so there is no
+sticky-session logic to write and no `SO_REUSEPORT` set by hand — the scheduler already
+has the information such a scheme would have to reconstruct.
+
+`MCP_CLUSTER_WORKERS=1` means **no fork at all**: one process, one listener, the
+pre-cluster behaviour. That is what makes the cluster bisectable — the same code answers
+with and without workers, so a difference between them is a difference in the fork
+rather than in the transport.
+
+The primary binds nothing, so the startup lines in a container's log describe ports that
+are genuinely open, from the processes that opened them. A worker whose primary is gone
+exits on `disconnect`: it would otherwise hold the port, and keep answering, for whoever
+starts next.
+
+The primary relays a signal to its workers and waits for the last one to go, so the port
+is closed before the process that started it is — a test that stops the server and then
+checks the port is refused must not race a primary that exits while its workers are
+still answering. A second signal during the drain is the operator saying they have
+stopped waiting, and it exits at once rather than queueing behind the first.
 
 ### stdout belongs to the protocol
 

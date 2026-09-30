@@ -26,7 +26,7 @@ Dockerfile                    node:22-alpine, src/ and content/ only; written, n
 content/                      the published set - the product, and the tool surface
   index/                      the routing index
 src/
-  index.js                    entry point; picks stdio or streamable HTTP, owns the HTTP server
+  index.js                    entry point; picks stdio or streamable HTTP, owns the cluster
   app.js                      the express application as a pure factory - builds, never listens
   server.js                   builds the McpServer, registers every tool, exports listTools()
   cli.js                      the CLI: help, version, tools, serve
@@ -35,7 +35,7 @@ src/
     from-content.js           builds one tool per markdown file in content/, at import
 test/
   server.test.js              bijection, derivation, no-argument, served bytes, surface parity - in memory
-  http.test.js                the same guarantees over a real socket; starts the real process
+  http.test.js                the same guarantees over a real socket, plus the workers; starts the real process
 wiki/                         human documentation
 .agents/                      this set - rules, agent wiki, memory, indexes
 ```
@@ -60,6 +60,7 @@ wiki/                         human documentation
 | `PORT` | `src/index.js` | HTTP port, default `3000`. |
 | `HOST` | `src/index.js` | HTTP bind host, default `0.0.0.0` (all interfaces). |
 | `MCP_ALLOWED_HOSTS` | `src/app.js` | Comma-separated `Host` allow-list. **Unset means off** - no list, every host accepted, and the startup line on stderr says so. |
+| `MCP_CLUSTER_WORKERS` | `src/index.js` | HTTP worker count, default one per CPU. **`1` forks nothing.** stdio never forks. |
 
 There is no `API_KEY`. Nothing here reaches an external service.
 
@@ -101,9 +102,16 @@ The three tools today: `roblox_security_index`, `trust_boundaries`,
   is worse than no tool.
 * **A fresh `McpServer` per HTTP request.** `src/app.js` builds and closes one per
   request because `McpServer` holds per-connection state. Do not hoist it to module
-  scope.
+  scope — and note that with workers on, that request may be answered by any of N
+  separate processes.
 * **`src/app.js` must not call `listen()`.** It is a factory; `src/index.js` owns the
-  port. A file that both builds and binds cannot be reasoned about without opening one.
+  port and the worker count. A file that both builds and binds cannot be reasoned about
+  without opening one.
+* **The primary is not a server.** It forks and relays signals; it binds nothing, so it
+  must never print a `serving over http` line. A worker must exit on `disconnect` —
+  without it, a worker whose primary was `SIGKILL`ed keeps the port and keeps answering
+  for whoever starts next, and the suite fails on its *second* run rather than on the one
+  that leaked it.
 * **The `Host` guard is the SDK's `hostHeaderValidation`, mounted only when a list
   exists.** There is no second parser in this repository, and there was one until the
   express migration: `node:http` responses have no `res.status()` or `res.json()`, so

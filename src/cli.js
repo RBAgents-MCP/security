@@ -20,6 +20,7 @@ Environment
   MCP_TRANSPORT    stdio (default) or http
   PORT             HTTP port, default 3000
   HOST             HTTP bind host, default 0.0.0.0 (all interfaces)
+  MCP_CLUSTER_WORKERS  HTTP worker count, default one per CPU; 1 forks nothing
 
 No tool in this server needs an API key.`;
 

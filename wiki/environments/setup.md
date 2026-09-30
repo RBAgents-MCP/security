@@ -24,13 +24,14 @@ Three dependencies: `@modelcontextprotocol/sdk`, `express`, and `zod`.
 ## No authentication
 
 Nothing here reaches an external service, so there is **no key to set**. There are
-four environment variables, and all of them are optional — the server starts, lists its
+five environment variables, and all of them are optional — the server starts, lists its
 three tools, and answers every request with none of them set. Full list:
 [`env.md`](env.md).
 
-Two of them are worth knowing about before you expose this over HTTP rather than
-stdio: `HOST` decides which interface the listener binds, and `MCP_ALLOWED_HOSTS` is a
-`Host` header allow-list that is **off when unset**.
+Three of them are worth knowing about before you expose this over HTTP rather than
+stdio: `HOST` decides which interface the listener binds, `MCP_ALLOWED_HOSTS` is a
+`Host` header allow-list that is **off when unset**, and `MCP_CLUSTER_WORKERS` decides
+how many processes serve HTTP — one per CPU by default, and `1` for none at all.
 
 ## CLI mode
 
