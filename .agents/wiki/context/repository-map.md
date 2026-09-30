@@ -27,6 +27,7 @@ content/                      the published set - the product, and the tool surf
   index/                      the routing index
 src/
   index.js                    entry point; picks stdio or streamable HTTP, owns the HTTP server
+  app.js                      the express application as a pure factory - builds, never listens
   server.js                   builds the McpServer, registers every tool, exports listTools()
   cli.js                      the CLI: help, version, tools, serve
   version.js                  reads version out of package.json at import
@@ -58,7 +59,7 @@ wiki/                         human documentation
 | `MCP_TRANSPORT` | `src/index.js` | `stdio` (default) or `http`. |
 | `PORT` | `src/index.js` | HTTP port, default `3000`. |
 | `HOST` | `src/index.js` | HTTP bind host, default `0.0.0.0` (all interfaces). |
-| `MCP_ALLOWED_HOSTS` | `src/index.js` | Comma-separated `Host` allow-list. **Unset means off** - no list, every host accepted, and the startup line on stderr says so. |
+| `MCP_ALLOWED_HOSTS` | `src/app.js` | Comma-separated `Host` allow-list. **Unset means off** - no list, every host accepted, and the startup line on stderr says so. |
 
 There is no `API_KEY`. Nothing here reaches an external service.
 
@@ -98,9 +99,17 @@ The three tools today: `roblox_security_index`, `trust_boundaries`,
 * **Frontmatter is read by hand, not by a YAML parser.** Only single-line scalar fields.
   A missing `description:` is a startup error, because a tool a client cannot route on
   is worse than no tool.
-* **A fresh `McpServer` per HTTP request.** `src/index.js` builds and closes one per
+* **A fresh `McpServer` per HTTP request.** `src/app.js` builds and closes one per
   request because `McpServer` holds per-connection state. Do not hoist it to module
   scope.
+* **`src/app.js` must not call `listen()`.** It is a factory; `src/index.js` owns the
+  port. A file that both builds and binds cannot be reasoned about without opening one.
+* **The `Host` guard is the SDK's `hostHeaderValidation`, mounted only when a list
+  exists.** There is no second parser in this repository, and there was one until the
+  express migration: `node:http` responses have no `res.status()` or `res.json()`, so
+  the middleware could not be used and a hand-rolled `hostName()` stood in. Do not
+  reintroduce a local one - if the middleware cannot be mounted, the answer is a
+  framework that can mount it, not a second implementation that can drift.
 * **`content/` is the product, not a source folder.** Every file in it is served
   verbatim on the next boot, with its frontmatter intact. `src/` is local; a change to
   `content/` changes what every consuming repository reads.

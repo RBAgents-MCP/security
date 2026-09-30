@@ -19,7 +19,7 @@ npm install
 npm test
 ```
 
-Two dependencies: `@modelcontextprotocol/sdk` and `zod`.
+Three dependencies: `@modelcontextprotocol/sdk`, `express`, and `zod`.
 
 ## No authentication
 

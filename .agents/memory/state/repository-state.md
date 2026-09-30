@@ -14,8 +14,9 @@ serves the Roblox security set read-only, one tool per file. It is not a templat
 
 ## Stack
 
-Node.js 20+, ESM, no build step. Two runtime dependencies:
-`@modelcontextprotocol/sdk` and `zod`. Tests are `node --test`, no framework.
+Node.js 20+, ESM, no build step. Three runtime dependencies:
+`@modelcontextprotocol/sdk`, `express`, and `zod`. Tests are `node --test`, no
+framework.
 
 ## What exists
 
@@ -38,12 +39,19 @@ Node.js 20+, ESM, no build step. Two runtime dependencies:
 * **Surface parity.** `src/cli.js` prints `listTools()` from `src/server.js`;
   `test/server.test.js` pins the CLI list against the MCP client's `tools/list` and the
   tool list against the files on disk, in both directions.
-* **An HTTP transport, hardened.** `StreamableHTTPServerTransport` at `POST /mcp` plus
-  `GET /healthz`, stateless, with `HOST` binding, an `MCP_ALLOWED_HOSTS` `Host`
-  allow-list (off when unset, and it says so on stderr), a 4 MiB body cap, and a
-  drain-before-close shutdown. `test/http.test.js` covers all of it over a real socket
-  against the real process - see
-  [`../tasks/http-transport-and-docker.md`](../tasks/http-transport-and-docker.md).
+* **An express HTTP transport, hardened.** `StreamableHTTPServerTransport` at
+  `POST /mcp` plus `GET /healthz`, stateless, with `HOST` binding, an
+  `MCP_ALLOWED_HOSTS` `Host` allow-list (off when unset, and it says so on stderr), a
+  4 MiB body cap, and a drain-before-close shutdown. The `node:http` server and its
+  hand-rolled body reader are gone: `src/app.js` is a pure factory that builds the
+  express application and never listens, and `src/index.js` keeps the port, the
+  interface and the startup lines. The `Host` guard is the SDK's own
+  `hostHeaderValidation`, mounted natively and **not mounted at all** when the list is
+  unset — the hand-rolled `hostName()` parser it replaced existed only because
+  `node:http` responses have no `res.status()` or `res.json()`. `test/http.test.js`
+  covers all of it over a real socket against the real process - see
+  [`../tasks/http-transport-and-docker.md`](../tasks/http-transport-and-docker.md) and
+  [`../tasks/express-cluster-migration.md`](../tasks/express-cluster-migration.md).
 * **A container image.** `Dockerfile` and `.dockerignore`, `node:22-alpine`, `src/` and
   `content/` only, non-root. **Written and reviewed as source; never built or run.**
 * **Instruction system.** Mode B - `AGENTS.md` plus `.agents/`, resolving the shared set
@@ -55,10 +63,10 @@ Node.js 20+, ESM, no build step. Two runtime dependencies:
 
 ## Test counts
 
-**29 total: 13 in `server.test.js`, 16 in `http.test.js`.** Baseline before the per-file
-change was also 29 — 12 and 16 — so the `server.test.js` count went **up** by one while
-the surface went from one tool to three. Five path-based cases were deleted and six
-broader ones added. See [`../tasks/per-file-tools.md`](../tasks/per-file-tools.md).
+**37 total: 13 in `server.test.js`, 24 in `http.test.js`.** Before the express
+migration it was 29 — 13 and 16 — and before the per-file change it was 29 as well —
+12 and 16. See [`../tasks/per-file-tools.md`](../tasks/per-file-tools.md) and
+[`../tasks/express-cluster-migration.md`](../tasks/express-cluster-migration.md).
 
 ## What is not built
 
